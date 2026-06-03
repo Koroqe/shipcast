@@ -395,13 +395,14 @@ def _install_video_assets_mocks(monkeypatch: pytest.MonkeyPatch, *, premium: boo
 
 
 def _install_voice_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Mock s07_voice: whisperx-on-PATH gate, ElevenLabs synth, WhisperX align."""
+    """Mock s07_voice: whisper-backend gate, ElevenLabs synth, WhisperX align."""
     from unittest.mock import MagicMock
 
     from shipcast.schemas import WordTimestamp
 
-    # The check_inputs gate calls shutil.which("whisperx"); force it present.
-    monkeypatch.setattr(voice_mod.shutil, "which", lambda name: "/usr/bin/whisperx")
+    # The check_inputs gate verifies the openai-whisper backend is importable;
+    # force it "present" so the mocked alignment client is used (no real model).
+    monkeypatch.setattr(voice_mod, "_whisper_installed", lambda: True)
 
     elevenlabs = MagicMock()
 
