@@ -45,6 +45,7 @@ subscription and incurs NO per-call USD cost.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import zipfile
 from pathlib import Path
@@ -56,6 +57,7 @@ from shipcast.errors import (
     SubagentFailed,
     SubagentTimeout,
 )
+from shipcast.logging_setup import LOGGER_NAME
 from shipcast.manifest import StageStatus
 from shipcast.schemas import AssetEntry, PackageManifest
 from shipcast.stage import StageResult
@@ -307,14 +309,18 @@ class PackageStage(BaseStage):
         self._write_zip(project, zip_path, rels)
         readme_path.write_text(self._render_readme(project, pkg), encoding="utf-8")
 
-        # Optional code-reviewer sanity check. On failure, remove the partial
-        # artifacts so the FAILED stage leaves nothing behind (TC-14.5).
+        # Optional README sanity check — BEST-EFFORT. The zip + README are
+        # already written; a flaky/slow claude -p review must NOT discard a
+        # complete package. On timeout or non-zero exit, log a warning and keep
+        # the artifacts (the operator eyeballs the README at the human gate).
         try:
             self._review_readme(readme_path)
-        except (SubagentTimeout, SubagentFailed):
-            zip_path.unlink(missing_ok=True)
-            readme_path.unlink(missing_ok=True)
-            raise
+        except (SubagentTimeout, SubagentFailed) as exc:
+            logging.getLogger(LOGGER_NAME).warning(
+                "README sanity check (advisory) did not complete: %s — keeping "
+                "the package; review the README at the human gate.",
+                exc,
+            )
 
         return StageResult(
             status=StageStatus.DONE,

@@ -289,8 +289,9 @@ def test_tc_21_2_zip_byte_identical_same_project_rerun(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_tc_14_5_code_reviewer_timeout_fails(tmp_path: Path) -> None:
-    from shipcast.errors import SubagentTimeout
+def test_tc_14_5_readme_review_timeout_is_advisory(tmp_path: Path) -> None:
+    """A timed-out README review is BEST-EFFORT: the package still completes."""
+    from shipcast.manifest import StageStatus
 
     project = _build_project(tmp_path)
 
@@ -298,13 +299,14 @@ def test_tc_14_5_code_reviewer_timeout_fails(tmp_path: Path) -> None:
         raise subprocess.TimeoutExpired(cmd, timeout=300)
 
     stage = PackageStage(subprocess_run=_timeout_run)
-    with pytest.raises(SubagentTimeout):
-        stage.run(project)
+    result = stage.run(project)
 
-    # No partial artifacts left on disk.
+    # Stage DONE and the artifacts are KEPT (the slow review must not discard a
+    # complete package; the operator reviews the README at the human gate).
+    assert result.status == StageStatus.DONE
     pkg_dir = project.stage_dir("11_package")
-    assert not (pkg_dir / "release.zip").exists()
-    assert not (pkg_dir / "README.md").exists()
+    assert (pkg_dir / "release.zip").is_file()
+    assert (pkg_dir / "README.md").is_file()
 
 
 def test_readme_review_invoked_via_claude(tmp_path: Path) -> None:
