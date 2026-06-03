@@ -75,6 +75,29 @@ class ChangelogEntryNotFound(ShipcastError):
     """
 
 
+class BrandPackIncomplete(ShipcastError):
+    """The operator's ``projects/_brand/<brand_slug>/`` pack is missing a REQUIRED file.
+
+    Raised by ``s03_brand.check_inputs`` BEFORE any external API call (Playwright
+    or Gemini). The brand-pack contract (``.claude/CLAUDE.md``) REQUIRES, at
+    minimum, ``voice.md``, at least one ``.ttf`` in ``fonts/``, and a logo
+    (``logo.svg`` or ``logo.png``). The exception message LISTS every missing
+    REQUIRED item so the operator can fix them in one pass (FR-3.3 / TC-6.2..6.5).
+
+    ``missing`` is preserved as a named attribute (a sorted tuple of the missing
+    item labels) so tests can assert on the set independently of the message.
+    """
+
+    def __init__(self, brand_slug: str, missing: tuple[str, ...]) -> None:
+        self.brand_slug = brand_slug
+        self.missing = missing
+        listed = ", ".join(missing)
+        super().__init__(
+            f"brand pack for {brand_slug!r} is incomplete; missing required "
+            f"file(s): {listed}"
+        )
+
+
 class UnsupportedPlatform(ShipcastError):
     """The current OS is not supported by the shipcast CLI (macOS/Linux only)."""
 

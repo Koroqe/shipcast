@@ -297,6 +297,59 @@ class EnrichedContext(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# BrandProposal (s03_brand artifact)
+# --------------------------------------------------------------------------- #
+
+
+class BrandProposal(BaseModel):
+    """The ``03_brand/proposal.json`` artifact written by ``s03_brand``.
+
+    The proposal is the machine-readable summary of the brand extraction. The
+    binary brand artifacts (``logo.png``, ``style_sheet.png``, ``voice.md``)
+    live as sibling files in ``03_brand/`` and are declared outputs alongside
+    this JSON; ``compute_outputs_hash`` covers all of them, so an operator edit
+    to any one is detected by ``shipcast approve`` (FR-3.10).
+
+    **Brand data never enters ``config_snapshot``** (architecture invariant): the
+    proposal and its sibling files are the ONLY home for brand bytes; downstream
+    stages read them off disk, and ``inputs_hash`` (via
+    ``additional_input_paths``) covers brand-pack drift.
+
+    Fields:
+    * ``palette`` — hex color candidates. Right after the run this is the
+      top-≤5 extracted (or the 3 ``palette.hint.json`` values); the operator is
+      expected to hand-edit down to exactly 3 (primary/accent/neutral) before
+      approving (UC-4 step 5). Each entry must be a ``#rrggbb`` hex string.
+    * ``font_family`` — the live app's body ``font-family`` string (or a brand
+      default when the operator pre-seeds it).
+    * ``logo_detected`` — ``False`` when no logo was found on the live app and a
+      1x1 transparent placeholder PNG was written instead (UC-4-A3); the
+      operator must supply a real ``logo.png`` before approving.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    palette: list[str]
+    font_family: str
+    logo_detected: bool
+
+    @field_validator("palette")
+    @classmethod
+    def _palette_hex(cls, v: list[str]) -> list[str]:
+        for color in v:
+            c = color.strip().lower()
+            if not (
+                c.startswith("#")
+                and len(c) == 7
+                and all(ch in "0123456789abcdef" for ch in c[1:])
+            ):
+                raise ValueError(
+                    f"palette entries must be '#rrggbb' hex strings, got {color!r}"
+                )
+        return v
+
+
+# --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 
