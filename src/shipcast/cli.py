@@ -43,6 +43,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import sys
 import traceback
 from collections.abc import Iterator
@@ -51,6 +52,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
@@ -59,14 +61,17 @@ from rich.table import Table
 import shipcast.stages as _stages
 from shipcast import __version__
 from shipcast.clients import check_available_or_raise
+from shipcast.config import Settings
 from shipcast.cost import CostLedger
 from shipcast.errors import (
     CannotApproveNonDoneStage,
     CostCapExceeded,
     FfmpegNotFound,
+    InvalidSlug,
     LockBypassNotAcknowledged,
     ManifestCorrupt,
     ManifestMigrationNeeded,
+    ProjectExists,
     ProjectLocked,
     ProjectNotFound,
     ShipcastError,
@@ -772,13 +777,166 @@ def _record_failure(
 
 
 # --------------------------------------------------------------------------- #
-# Per-stage verbs — each is a thin shim that resolves its stage class at call
-# time from the live registry.
+# pick — bespoke verb. Bootstraps a project from a target repo path + --entry
+# (create mode) OR dispatches 01_pick on an existing project slug (dispatch
+# mode). The discriminator is the presence of --entry.
 # --------------------------------------------------------------------------- #
-
 
 _RERUN_OPT = typer.Option("--rerun", help="Re-run this stage even if it is already done.")
 _YES_OPT = typer.Option("--yes", help="Skip the cascade-confirmation prompt.")
+
+
+def _slugify(text: str) -> str:
+    """Lowercase, replace non-alphanumerics with hyphens, collapse + trim.
+
+    Produces a directory-safe token (matches `Project._SLUG_PATTERN` once
+    combined with the leading repo-short component). Empty input yields "x" so
+    the result is never empty.
+    """
+    out = re.sub(r"[^a-z0-9]+", "-", text.strip().casefold()).strip("-")
+    return out or "x"
+
+
+def _derive_slug(repo_path: Path, entry_heading: str) -> str:
+    """Derive a project slug `<repo-short>--<entry-slug>` from repo + heading.
+
+    `<repo-short>` is the slugified final path component of `repo_path`;
+    `<entry-slug>` is the slugified entry heading. The two are joined with a
+    double hyphen so the boundary is visually obvious in `projects/`.
+    """
+    repo_short = _slugify(repo_path.name)
+    entry_slug = _slugify(entry_heading)
+    return f"{repo_short}--{entry_slug}"
+
+
+_PICK_ENTRY_OPT = typer.Option(
+    "--entry",
+    help=(
+        "Exact CHANGELOG heading to pick (the text between '### ' and ' — HH:MM "
+        "UTC'). When supplied, the positional argument is treated as a target "
+        "REPO PATH and a new project is created. When omitted, the positional "
+        "argument is treated as an existing project SLUG to (re)dispatch."
+    ),
+)
+_PICK_BRAND_OPT = typer.Option(
+    "--brand-slug", help="Brand pack slug (defaults to the repo short name)."
+)
+_PICK_LIVE_URL_OPT = typer.Option(
+    "--live-url", help="Optional https live URL for downstream brand/enrich extract."
+)
+_PICK_VIDEO_MODE_OPT = typer.Option(
+    "--video-mode", help="Video render mode: 'standard' or 'premium'."
+)
+_PICK_FORCE_OPT = typer.Option(
+    "--force", help="Overwrite an existing project at the derived slug (create mode)."
+)
+
+
+def _write_input_yaml(
+    project: Project,
+    *,
+    repo_path: Path,
+    entry_heading: str,
+    brand_slug: str,
+    live_url: str | None,
+    video_mode: str,
+) -> None:
+    """Write the project's `input.yaml` from the `pick` create-mode arguments.
+
+    Only fields the operator supplied are emitted; `live_url` / `feature_walkthrough`
+    stay absent (the schema treats them as optional). The resulting file is what
+    `s01_pick.run()` reads and validates via `InputYaml`.
+    """
+    payload: dict[str, object] = {
+        "repo_path": str(repo_path),
+        "entry_heading": entry_heading,
+        "brand_slug": brand_slug,
+        "video_mode": video_mode,
+    }
+    if live_url is not None:
+        payload["live_url"] = live_url
+    project.input_path.write_text(
+        yaml.safe_dump(payload, sort_keys=True, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
+@app.command()
+def pick(
+    target: str,
+    entry: Annotated[str | None, _PICK_ENTRY_OPT] = None,
+    brand_slug: Annotated[str | None, _PICK_BRAND_OPT] = None,
+    live_url: Annotated[str | None, _PICK_LIVE_URL_OPT] = None,
+    video_mode: Annotated[str, _PICK_VIDEO_MODE_OPT] = "standard",
+    rerun: Annotated[bool, _RERUN_OPT] = False,
+    yes: Annotated[bool, _YES_OPT] = False,
+    force: Annotated[bool, _PICK_FORCE_OPT] = False,
+) -> None:
+    """Pick a CHANGELOG entry — creating the project when `--entry` is given.
+
+    Two modes:
+
+    * ``shipcast pick <repo-path> --entry "<heading>"`` — create a project from
+      the template (slug derived from repo + heading), write its ``input.yaml``,
+      then dispatch ``01_pick``.
+    * ``shipcast pick <slug>`` — dispatch ``01_pick`` on an existing project.
+    """
+    check_platform()
+    stage_id = _VERB_TO_STAGE_ID["pick"]
+    stage_cls = _resolve_stage_or_exit(stage_id)
+
+    if entry is None:
+        # Dispatch mode: `target` is an existing project slug.
+        _dispatch(stage_cls(), target, rerun=rerun, yes=yes)
+        return
+
+    # Create mode: `target` is a target repo path.
+    repo_path = Path(target).expanduser()
+    slug = _derive_slug(repo_path, entry)
+    effective_brand = brand_slug if brand_slug is not None else _slugify(repo_path.name)
+
+    settings = Settings.from_files(
+        config_path=Path("config.toml"),
+        env_path=Path(".env"),
+    )
+    config_snapshot = settings.public_dict()
+    try:
+        project = Project.create(
+            _GlobalOptions.projects_root,
+            slug,
+            config_snapshot,
+            settings=settings,
+            force=force,
+        )
+    except InvalidSlug as exc:
+        _console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(_EXIT_USER_ERROR) from exc
+    except ProjectExists as exc:
+        _console.print(
+            f"[red]error:[/red] {exc}\n"
+            f"Re-run with --force to overwrite, or `shipcast pick {slug}` to "
+            f"re-dispatch the existing project."
+        )
+        raise typer.Exit(_EXIT_USER_ERROR) from exc
+
+    _write_input_yaml(
+        project,
+        repo_path=repo_path,
+        entry_heading=entry,
+        brand_slug=effective_brand,
+        live_url=live_url,
+        video_mode=video_mode,
+    )
+    _console.print(
+        f"[green]Created project[/green] [bold cyan]{slug}[/bold cyan] at {project.path}."
+    )
+    _dispatch(stage_cls(), slug, rerun=rerun, yes=yes)
+
+
+# --------------------------------------------------------------------------- #
+# Per-stage verbs — each is a thin shim that resolves its stage class at call
+# time from the live registry.
+# --------------------------------------------------------------------------- #
 
 
 def _make_verb_command(verb: str, stage_id: str) -> None:
@@ -804,6 +962,11 @@ def _make_verb_command(verb: str, stage_id: str) -> None:
 
 
 for _verb, _stage_id in _VERB_TO_STAGE_ID.items():
+    # `pick` gets a bespoke command (below) because it can ALSO bootstrap a
+    # project from a target repo path + --entry; the other ten verbs are pure
+    # dispatch shims.
+    if _verb == "pick":
+        continue
     _make_verb_command(_verb, _stage_id)
 
 

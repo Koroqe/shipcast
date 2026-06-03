@@ -1,0 +1,8 @@
+{
+  "date": "2026-06-02",
+  "details": "Adds a GET /api/reports/:id/export endpoint that streams report rows as CSV. Auth-protected, validates ownership, paginates large datasets.",
+  "name": "Add CSV export",
+  "raw": "### Add CSV export — 14:30 UTC\n**Summary:** Users can now download their report as a spreadsheet file.\n**Details:** Adds a GET /api/reports/:id/export endpoint that streams report rows as CSV. Auth-protected, validates ownership, paginates large datasets.",
+  "summary": "Users can now download their report as a spreadsheet file.",
+  "time_utc": "14:30"
+}

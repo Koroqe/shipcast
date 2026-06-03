@@ -14,10 +14,11 @@ class to ``ALL_STAGES`` in pipeline order.
 from __future__ import annotations
 
 from shipcast.stages._base import BaseStage
+from shipcast.stages.s01_pick import PickStage
 
 #: All concrete stages in pipeline order. Useful for the dispatcher and
-#: integration tests. Empty until stage slices land (Slice 6 onward).
-ALL_STAGES: tuple[type[BaseStage], ...] = ()
+#: integration tests. Grows one entry per stage slice (Slice 6 onward).
+ALL_STAGES: tuple[type[BaseStage], ...] = (PickStage,)
 
 
 def build_downstream_map() -> dict[str, tuple[str, ...]]:
@@ -37,5 +38,6 @@ def build_downstream_map() -> dict[str, tuple[str, ...]]:
 __all__ = [
     "ALL_STAGES",
     "BaseStage",
+    "PickStage",
     "build_downstream_map",
 ]

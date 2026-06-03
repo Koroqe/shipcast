@@ -149,19 +149,33 @@ def test_status_empty_registry_is_fine(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_unimplemented_verb_reports_not_yet_implemented(tmp_path: Path) -> None:
-    """With empty ALL_STAGES, a stage verb prints 'not yet implemented' and exits 2."""
+def test_unimplemented_verb_reports_not_yet_implemented(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With an empty registry, a stage verb prints 'not yet implemented' and exits 2.
+
+    `01_pick` is implemented as of Slice 6, so this test pins the empty-registry
+    fallback path explicitly by clearing `ALL_STAGES` (the scenario it documents:
+    a verb whose stage class has not been registered yet, e.g. `enrich` before
+    its slice lands)."""
+    monkeypatch.setattr(_stages, "ALL_STAGES", ())
     _seed_project(tmp_path)
-    result = runner.invoke(cli.app, ["--projects-root", str(tmp_path), "pick", "entry"])
+    result = runner.invoke(cli.app, ["--projects-root", str(tmp_path), "enrich", "entry"])
     assert result.exit_code == cli._EXIT_STAGE_FAILURE, result.output
     assert "not yet implemented" in result.output
 
 
-def test_approve_unknown_stage_id_exits_user_error(tmp_path: Path) -> None:
-    """approve against a stage_id absent from the registry exits 1."""
+def test_approve_unknown_stage_id_exits_user_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """approve against a stage_id absent from the registry exits 1.
+
+    `01_pick` is now registered, so this pins the unknown-stage path against an
+    unregistered id (`02_enrich`, with the registry holding only `PickStage`)."""
+    monkeypatch.setattr(_stages, "ALL_STAGES", (FakeStage,))
     _seed_project(tmp_path)
     result = runner.invoke(
-        cli.app, ["--projects-root", str(tmp_path), "approve", "entry", "01_pick"]
+        cli.app, ["--projects-root", str(tmp_path), "approve", "entry", "02_enrich"]
     )
     assert result.exit_code == cli._EXIT_USER_ERROR, result.output
     assert "unknown stage_id" in result.output
@@ -208,8 +222,13 @@ def test_tc_19_4_no_client_constructed_at_cli_startup() -> None:
     # importing cli at module top already happened; assert no SDK leaked in-proc
     # is unreliable (other tests may have imported them), so we only check that
     # the lazy registry indirection exists and is callable with no clients built.
+    # As of Slice 6 the registry resolves `01_pick`; resolving it constructs NO
+    # external client (clients are built lazily inside `run()`, never at import
+    # or registry resolution).
     assert callable(cli._stage_registry)
-    assert cli._stage_registry() == {}  # empty by default in Slice 1
+    registry = cli._stage_registry()
+    assert set(registry) == {"01_pick"}
+    assert registry["01_pick"] is _stages.PickStage
 
 
 def test_tc_19_3_elevenlabs_missing_key_raises_named(
