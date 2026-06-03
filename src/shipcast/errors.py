@@ -183,6 +183,71 @@ class GeminiImageGenFailed(ShipcastError):
         )
 
 
+class GeminiRateLimited(ShipcastError):
+    """Gemini returned HTTP 429 (rate limit / quota) on a multimodal call.
+
+    Raised by `GeminiClient.multimodal` (Slice 7) when the AI Studio
+    ``generateContent`` surface responds with status 429. Distinct from the
+    image-generation `GeminiTransientError` family: the *narrative* call has no
+    stage-owned retry loop (one shot per `s02_enrich` run), so a 429 is a
+    terminal failure that surfaces directly through the dispatcher's FAILED
+    transition with ``error.type == "GeminiRateLimited"`` (TC-5.7 / AC-5.4).
+    The message carries the (truncated) response body but never any API key.
+    """
+
+    def __init__(self, body: str = "") -> None:
+        self.body = body
+        super().__init__(f"Gemini multimodal call rate-limited (HTTP 429): {body}")
+
+
+class SubagentTimeout(ShipcastError):
+    """A `claude -p` sub-agent subprocess exceeded its wall-clock timeout.
+
+    Raised by stages that drive Claude sub-agents (`s02_enrich`'s ba-analyst,
+    `s04_plan`'s planner/brand-guardian, etc.) when `subprocess.run` raises
+    `subprocess.TimeoutExpired` (300 s budget). Surfaces through the FAILED
+    transition with ``error.type == "SubagentTimeout"`` (TC-5.4 / UC-28).
+    The message identifies the agent so the operator knows which call stalled.
+    """
+
+
+class SubagentFailed(ShipcastError):
+    """A `claude -p` sub-agent subprocess exited non-zero.
+
+    Raised when the `claude` CLI returns a non-zero exit code (auth failure,
+    model error, content policy, etc.). The captured ``stderr`` tail is folded
+    into the message so the operator can diagnose without re-running (TC-5.5).
+    ``stderr`` is preserved as a named attribute for independent assertions.
+    """
+
+    def __init__(self, agent: str, returncode: int, stderr: str) -> None:
+        self.agent = agent
+        self.returncode = returncode
+        self.stderr = stderr
+        super().__init__(
+            f"sub-agent {agent!r} exited {returncode}: {stderr.strip()[:500]}"
+        )
+
+
+class SubagentMalformedOutput(ShipcastError):
+    """A `claude -p` sub-agent exited 0 but its stdout was not valid JSON.
+
+    Raised when an agent that is contracted to emit JSON returns un-parseable
+    output. Surfaces through the FAILED transition with
+    ``error.type == "SubagentMalformedOutput"`` (TC-5.6 / UC-28-A2).
+    """
+
+
+class PlaywrightTimeout(ShipcastError):
+    """A Playwright navigation/screenshot exceeded its timeout budget.
+
+    Raised by `PlaywrightClient` methods (Slice 8) and propagated by
+    `s02_enrich` when feature-walkthrough screenshots time out. Surfaces
+    through the FAILED transition with ``error.type == "PlaywrightTimeout"``
+    (TC-5.8 / UC-3-E5 / FR-3.5).
+    """
+
+
 class PlaywrightBrowserNotInstalled(ShipcastError):
     """Chromium binary is absent from the playwright-managed install location.
 

@@ -222,13 +222,16 @@ def test_tc_19_4_no_client_constructed_at_cli_startup() -> None:
     # importing cli at module top already happened; assert no SDK leaked in-proc
     # is unreliable (other tests may have imported them), so we only check that
     # the lazy registry indirection exists and is callable with no clients built.
-    # As of Slice 6 the registry resolves `01_pick`; resolving it constructs NO
-    # external client (clients are built lazily inside `run()`, never at import
-    # or registry resolution).
+    # The registry grows one stage per slice; resolving it constructs NO external
+    # client (clients are built lazily inside `run()`, never at import or registry
+    # resolution). We assert the known stages are registered (superset check) and
+    # bound to the expected classes rather than pinning the exact set, so adding a
+    # stage in a later slice does not require touching this Slice-1 invariant test.
     assert callable(cli._stage_registry)
     registry = cli._stage_registry()
-    assert set(registry) == {"01_pick"}
+    assert {"01_pick", "02_enrich"} <= set(registry)
     assert registry["01_pick"] is _stages.PickStage
+    assert registry["02_enrich"] is _stages.EnrichStage
 
 
 def test_tc_19_3_elevenlabs_missing_key_raises_named(

@@ -224,6 +224,51 @@ class WordTimestamp(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# EnrichedContext (s02_enrich artifact)
+# --------------------------------------------------------------------------- #
+
+
+class EnrichedContext(BaseModel):
+    """The ``02_enrich/context.json`` artifact written by ``s02_enrich``.
+
+    **Architect MAJOR Finding 3 — single source of truth.** The enrichment
+    narrative is stored in EXACTLY ONE place: this model's ``narrative`` field
+    (serialized into ``02_enrich/context.json``). ``s02_enrich`` deliberately
+    does NOT also write a sibling ``narrative.md``; a second on-disk copy would
+    be an undeclared, un-hash-covered duplicate that could silently drift from
+    ``context.json`` (TC-5.9 / TC-20.4). ``context.json`` is the only declared
+    output, so ``compute_outputs_hash`` covers every byte of the narrative.
+
+    Fields:
+    * ``pr_links`` — URLs of merged PRs gathered via ``gh pr list`` (may be []).
+    * ``diff_stats`` — aggregate ``git log --stat`` numbers (files/insertions/…)
+      plus any per-path detail the stage chooses to record.
+    * ``narrative`` — the Gemini-multimodal-generated marketing narrative. The
+      SOLE copy of the narrative text (Finding 3). Must be non-empty.
+    * ``screenshots`` — project-relative paths to captured ``.png`` files under
+      ``02_enrich/screenshots/``. Empty when ``live_url`` was omitted (the
+      Playwright sub-step is skipped and logged — UC-3-A1).
+    * ``ba_framing`` — high-level framing notes from the ``ba-analyst`` sub-agent
+      (free-form, retained for downstream copy/plan stages).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pr_links: list[str] = []
+    diff_stats: dict[str, object] = {}
+    narrative: str
+    screenshots: list[str] = []
+    ba_framing: dict[str, object] = {}
+
+    @field_validator("narrative")
+    @classmethod
+    def _narrative_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("narrative must be a non-empty string (Finding 3 sole copy)")
+        return v
+
+
+# --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 

@@ -27,6 +27,7 @@ from shipcast.clients.ffmpeg_client import check_available_or_raise
 __all__ = [
     "AnthropicClient",
     "ElevenLabsClient",
+    "GeminiClient",
     "WhisperXClient",
     "check_available_or_raise",
 ]
@@ -46,4 +47,8 @@ def __getattr__(name: str) -> Any:
         from shipcast.clients.whisperx_client import WhisperXClient
 
         return WhisperXClient
+    if name == "GeminiClient":
+        from shipcast.clients.gemini_client import GeminiClient
+
+        return GeminiClient
     raise AttributeError(f"module 'shipcast.clients' has no attribute {name!r}")
