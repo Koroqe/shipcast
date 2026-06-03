@@ -74,8 +74,11 @@ if TYPE_CHECKING:
 
     from shipcast.project import Project
 
-#: Wall-clock budget for the social-copywriter sub-agent invocation.
-_SUBAGENT_TIMEOUT_SEC: int = 300
+#: Wall-clock budget for the social-copywriter sub-agent invocation. Copy is
+#: the heaviest one-shot generation in the pipeline (a 1200-2000 word blog plus
+#: a LinkedIn post plus an X thread in a single call), so it gets a wider budget
+#: than the other sub-agent stages.
+_SUBAGENT_TIMEOUT_SEC: int = 600
 
 #: Unique marker lines delimiting the three artifacts in the copywriter's
 #: plain-text stdout. Markers cannot appear in normal copy, so each section's
