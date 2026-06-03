@@ -27,8 +27,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from shipcast.config import Settings
 from shipcast.manifest import Manifest, StageStatus
 from shipcast.project import Project
