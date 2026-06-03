@@ -59,6 +59,22 @@ class StageOutputInvalid(ShipcastError):
     """A stage's run produced outputs that fail Pydantic validation or are missing files."""
 
 
+class ChangelogFileMissing(ShipcastError):
+    """A target project's ``CHANGELOG.md`` does not exist on disk.
+
+    Raised by ``changelog.parser.parse_changelog`` (and ``s01_pick``). shipcast
+    NEVER auto-creates the changelog — a missing file is always an operator error.
+    """
+
+
+class ChangelogEntryNotFound(ShipcastError):
+    """No changelog entry matched the requested ``entry_heading``.
+
+    Raised by ``s01_pick`` after a trimmed, case-insensitive match over every
+    parsed :class:`~shipcast.schemas.ChangelogEntry` name fails.
+    """
+
+
 class UnsupportedPlatform(ShipcastError):
     """The current OS is not supported by the shipcast CLI (macOS/Linux only)."""
 

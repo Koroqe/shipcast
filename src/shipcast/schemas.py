@@ -182,6 +182,32 @@ class InputYaml(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# ChangelogEntry (artifact produced by changelog/parser.py + s01_pick)
+# --------------------------------------------------------------------------- #
+
+
+class ChangelogEntry(BaseModel):
+    """One parsed entry from a target project's ``CHANGELOG.md``.
+
+    The canonical changelog format (see ``~/.claude/rules/changelog.md``) groups
+    entries under ``## YYYY-MM-DD`` day headings, each entry headed by
+    ``### <name> — HH:MM UTC`` and followed by ``**Summary:**`` / ``**Details:**``
+    lines. ``time_utc`` is ``None`` when the heading omits the ``— HH:MM UTC``
+    suffix. ``raw`` preserves the verbatim markdown of the entry (heading through
+    the last body line) for downstream stages that want the original text.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    date: str
+    time_utc: str | None = None
+    summary: str = ""
+    details: str = ""
+    raw: str = ""
+
+
+# --------------------------------------------------------------------------- #
 # WordTimestamp (consumed lazily by clients/whisperx_client.py)
 # --------------------------------------------------------------------------- #
 
