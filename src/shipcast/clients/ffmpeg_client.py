@@ -271,6 +271,153 @@ def assemble(
     )
 
 
+# ── Ken-Burns clip (Stage 06) ────────────────────────────────────────────
+
+
+#: Vertical showcase frame — every Stage-06 clip is exactly this size.
+VERTICAL_WIDTH: int = 1080
+VERTICAL_HEIGHT: int = 1920
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """ffprobe view of a video's first stream + container duration."""
+
+    codec_name: str | None
+    width: int | None
+    height: int | None
+    duration_sec: float | None
+
+
+def ken_burns_clip(
+    *,
+    still_path: Path,
+    duration_sec: float,
+    output_path: Path,
+    fast: bool = False,
+) -> Path:
+    """Render one still PNG into a slow pan/zoom 1080x1920 h264 MP4.
+
+    The filter pre-scales the still WAY up (``scale=8000:-1``) so ``zoompan`` has
+    sub-pixel headroom for a smooth slow push-in without the characteristic
+    1-px-per-frame jitter, then ``zoompan`` eases the zoom from 1.0 to 1.20 over
+    the clip and ``scale``/``crop`` settle the frame at the exact 1080x1920
+    showcase size. ONE subprocess call per invocation.
+
+    Args:
+        still_path: absolute path to the source PNG.
+        duration_sec: clip length in seconds (Stage 06 passes 3-5 s).
+        output_path: absolute path the MP4 is written to.
+        fast: when True, use ``-preset ultrafast -crf 28`` (test renders);
+            otherwise the production ``-preset medium -crf 23``.
+
+    Returns:
+        ``output_path`` on success.
+
+    Raises:
+        FfmpegAssembleFailed: ffmpeg exited non-zero (e.g. a missing still).
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    frames = max(1, round(duration_sec * _VIDEO_FPS))
+    preset = "ultrafast" if fast else "medium"
+    crf = "28" if fast else "23"
+    vf = (
+        "scale=8000:-1,"
+        f"zoompan=z='min(zoom+0.0010,1.20)':"
+        "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"d={frames}:s={VERTICAL_WIDTH}x{VERTICAL_HEIGHT}:fps={_VIDEO_FPS},"
+        "format=yuv420p"
+    )
+    argv = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-loop",
+        "1",
+        "-i",
+        str(still_path),
+        "-t",
+        f"{duration_sec:.3f}",
+        "-vf",
+        vf,
+        "-r",
+        str(_VIDEO_FPS),
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        crf,
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        str(output_path),
+    ]
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        stderr_tail = (result.stderr or "")[-_STDERR_TAIL_CHARS:]
+        raise FfmpegAssembleFailed(returncode=result.returncode, stderr_tail=stderr_tail)
+    return output_path
+
+
+def probe_video(path: Path) -> ProbeResult:
+    """Return the first video stream's codec/dimensions + container duration.
+
+    Uses one ``ffprobe`` call. Missing fields come back as ``None`` so the caller
+    (Stage 06's clip validator) can raise a structured ``ClipValidationFailed``
+    rather than crashing on a malformed probe.
+    """
+    argv = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name,width,height",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=0",
+        str(path),
+    ]
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    fields: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            fields[key.strip()] = value.strip()
+
+    def _as_int(value: str | None) -> int | None:
+        if value in (None, "", "N/A"):
+            return None
+        try:
+            return int(value)  # type: ignore[arg-type]  # narrowed above
+        except ValueError:
+            return None
+
+    def _as_float(value: str | None) -> float | None:
+        if value in (None, "", "N/A"):
+            return None
+        try:
+            return float(value)  # type: ignore[arg-type]  # narrowed above
+        except ValueError:
+            return None
+
+    codec = fields.get("codec_name")
+    return ProbeResult(
+        codec_name=codec if codec not in (None, "", "N/A") else None,
+        width=_as_int(fields.get("width")),
+        height=_as_int(fields.get("height")),
+        duration_sec=_as_float(fields.get("duration")),
+    )
+
+
 def _build_argv(
     *,
     concat_path: Path,

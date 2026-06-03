@@ -41,6 +41,7 @@ from pydantic import SecretStr
 from shipcast.errors import (
     GeminiNonTransientError,
     GeminiRateLimited,
+    GeminiSafetyBlocked,
     GeminiTransientError,
     MissingApiKey,
 )
@@ -182,7 +183,11 @@ class GeminiClient:
 
         feedback = payload.get("promptFeedback") or {}
         if feedback.get("blockReason"):
-            raise GeminiNonTransientError(
+            # GAP closure (UC-7-E1): surface a safety block as the dedicated
+            # GeminiSafetyBlocked subtype so the owning stage's retry loop sees a
+            # non-transient terminal error AND the manifest records
+            # error.type == "GeminiSafetyBlocked".
+            raise GeminiSafetyBlocked(
                 response.status_code,
                 f"content policy block: {feedback['blockReason']}",
             )

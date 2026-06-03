@@ -462,6 +462,65 @@ class Storyboard(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# VideoBeats (s06_video_assets artifact — the per-beat clip manifest)
+# --------------------------------------------------------------------------- #
+
+
+class VideoClip(BaseModel):
+    """One rendered clip recorded in ``06_video_assets/clips.json``.
+
+    Fields:
+    * ``index`` — 0-based beat index (drives the ``beat_{index:02d}.mp4`` name).
+    * ``filename`` — the clip filename relative to the stage dir.
+    * ``source`` — how the clip was produced: ``"veo"`` (premium hero) or
+      ``"ken_burns"`` (Imagen still + pan/zoom). A premium beat[0] that fell
+      back from a Veo safety block records ``"ken_burns"`` so the manifest is
+      an honest record of what was actually rendered.
+    * ``duration_sec`` — the clip's target on-screen seconds.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    index: int
+    filename: str
+    source: Literal["veo", "ken_burns"]
+    duration_sec: float
+
+    @field_validator("filename")
+    @classmethod
+    def _filename_safe(cls, v: str) -> str:
+        if not v.strip() or "/" in v or "\\" in v or ".." in v:
+            raise ValueError("clip filename must be a bare, safe filename")
+        return v
+
+
+class VideoBeats(BaseModel):
+    """The ``06_video_assets/clips.json`` artifact written by ``s06_video_assets``.
+
+    A small JSON manifest recording the render mode and one :class:`VideoClip`
+    per beat. The MP4 files themselves are the load-bearing outputs; this JSON
+    gives the stage a single schema-checkable artifact and lets downstream
+    Stage 08 read clip ordering/sources without re-probing every file.
+
+    Fields:
+    * ``mode`` — ``"standard"`` or ``"premium"`` (the resolved render mode).
+    * ``clips`` — the per-beat clips in order.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["standard", "premium"]
+    clips: list[VideoClip]
+
+    @field_validator("clips")
+    @classmethod
+    def _non_empty_clips(cls, v: list[VideoClip]) -> list[VideoClip]:
+        if not v:
+            raise ValueError("clips must contain at least one rendered clip")
+        return v
+
+
+# --------------------------------------------------------------------------- #
 # CarouselBeat (s04_plan carousel_beats → s09_graphics LinkedIn carousel)
 # --------------------------------------------------------------------------- #
 

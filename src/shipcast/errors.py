@@ -189,6 +189,22 @@ class GeminiNonTransientError(ShipcastError):
         )
 
 
+class GeminiSafetyBlocked(GeminiNonTransientError):
+    """Gemini Imagen returned an HTTP-200 *content-policy* safety block.
+
+    A distinct subtype of :class:`GeminiNonTransientError` raised by
+    ``GeminiClient.generate_image`` when the 200 response carries a
+    ``promptFeedback.blockReason`` envelope (Slice 13 GAP closure for UC-7-E1).
+    Because it is a ``GeminiNonTransientError`` subclass, every existing stage
+    retry loop that treats non-transient errors as terminal continues to do so
+    unchanged — but the dispatcher records ``error.type == "GeminiSafetyBlocked"``
+    so an operator can tell a safety block apart from a generic 4xx. The class
+    NAME *is* the documented ``subtype`` discriminator the QA GAP note refers to
+    (the manifest ``ErrorRecord`` is ``extra="forbid"`` and carries the value in
+    its ``type`` field rather than a separate ``subtype`` column).
+    """
+
+
 class GeminiImageGenFailed(ShipcastError):
     """Stage 09 failed to generate one scene's image after exhausting retries.
 
@@ -221,6 +237,81 @@ class GeminiRateLimited(ShipcastError):
     def __init__(self, body: str = "") -> None:
         self.body = body
         super().__init__(f"Gemini multimodal call rate-limited (HTTP 429): {body}")
+
+
+class VeoQuotaExceeded(ShipcastError):
+    """Veo 3 Fast returned an HTTP 429 / quota-exhausted error.
+
+    Raised by ``VeoClient.generate_clip`` (Slice 13) when the premium-mode hero
+    clip call is rejected for quota. Unlike a safety block — which the stage
+    silently falls back from — a quota error is a HARD failure: the stage
+    aborts immediately and processes no further beats (UC-8-E2 / FR-8.6), so the
+    operator waits for quota reset and reruns. Surfaces through the dispatcher's
+    FAILED transition with ``error.type == "VeoQuotaExceeded"``. The message
+    carries only a short status note — never the operator's prompt text.
+    """
+
+
+class VeoSafetyBlocked(ShipcastError):
+    """Veo 3 Fast rejected the hero-clip prompt for a content-policy reason.
+
+    Raised by ``VeoClient.generate_clip`` (Slice 13) when the Veo job completes
+    with a safety/content-policy block. The premium-mode stage catches this for
+    beat[0] ONLY and silently falls back to the standard Imagen + Ken-Burns path
+    (UC-8-E1 / FR-8.5), so the run still succeeds.
+
+    SECURITY (Slice 13 pre-review): the original ``image_prompt`` text MUST NOT
+    appear in this exception's message or in any log line. The constructor
+    accepts only a non-sensitive ``block_reason`` token (e.g. the API's category
+    label) and the message is fixed boilerplate — the caller never passes the
+    prompt in. ``self.block_reason`` is preserved for assertions.
+    """
+
+    def __init__(self, block_reason: str = "unspecified") -> None:
+        self.block_reason = block_reason
+        super().__init__(
+            f"Veo 3 Fast blocked the hero clip for content policy "
+            f"(reason: {block_reason}); falling back to Imagen + Ken-Burns. "
+            f"The original prompt is intentionally NOT included in this message."
+        )
+
+
+class VeoTimeout(ShipcastError):
+    """Veo 3 Fast job polling exceeded its 120 s budget without completing.
+
+    Raised by ``VeoClient.generate_clip`` (Slice 13) when the long-running-
+    operation poll loop reaches its 120 s wall-clock deadline before the job
+    reports ``done``. A HARD failure (UC-8-E3): the stage aborts and the operator
+    reruns. Surfaces with ``error.type == "VeoTimeout"``. Carries no prompt text.
+    """
+
+
+class ClipValidationFailed(ShipcastError):
+    """A rendered ``06_video_assets`` clip failed its ffprobe codec/dimension check.
+
+    Raised by ``VideoAssetsStage`` (Slice 13) when ``ffprobe`` reports a codec
+    other than h264 or dimensions other than 1080x1920 for a written clip
+    (UC-7-E3 / FR-8.7). The message identifies the offending clip filename plus
+    the observed codec/dimensions so the operator can locate the malformed beat
+    without re-running the render. Named attributes are preserved for tests.
+    """
+
+    def __init__(
+        self,
+        *,
+        filename: str,
+        codec: str | None,
+        width: int | None,
+        height: int | None,
+    ) -> None:
+        self.filename = filename
+        self.codec = codec
+        self.width = width
+        self.height = height
+        super().__init__(
+            f"clip {filename!r} failed validation: codec={codec!r} "
+            f"dimensions={width!r}x{height!r}; expected h264 1080x1920"
+        )
 
 
 class SubagentTimeout(ShipcastError):

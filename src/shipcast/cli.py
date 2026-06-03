@@ -961,11 +961,42 @@ def _make_verb_command(verb: str, stage_id: str) -> None:
     app.command(name=verb)(_cmd)
 
 
+_NO_VEO_OPT = typer.Option(
+    "--no-veo",
+    help=(
+        "Force the standard (Imagen + Ken-Burns) path even for a premium "
+        "project, so the Veo 3 Fast hero clip is never generated. Useful to "
+        "stay in the cheaper standard cost range for a premium-tagged entry."
+    ),
+)
+
+
+@app.command(name="video_assets")
+def video_assets(
+    slug: str,
+    no_veo: Annotated[bool, _NO_VEO_OPT] = False,
+    rerun: Annotated[bool, _RERUN_OPT] = False,
+    yes: Annotated[bool, _YES_OPT] = False,
+) -> None:
+    """Dispatch stage `06_video_assets` (both modes); `--no-veo` forces standard."""
+    check_platform()
+    stage_cls = _resolve_stage_or_exit(_VERB_TO_STAGE_ID["video_assets"])
+    # `no_veo` is plumbed into the stage instance (NOT imported by the stage from
+    # cli) so the stage stays a pure function of its inputs + this flag.
+    try:
+        stage = stage_cls(no_veo=no_veo)  # type: ignore[call-arg]
+    except TypeError:
+        # Defensive: a stage class without a `no_veo` kwarg (e.g. a test double)
+        # still dispatches in the default standard/premium path.
+        stage = stage_cls()
+    _dispatch(stage, slug, rerun=rerun, yes=yes)
+
+
 for _verb, _stage_id in _VERB_TO_STAGE_ID.items():
-    # `pick` gets a bespoke command (below) because it can ALSO bootstrap a
-    # project from a target repo path + --entry; the other ten verbs are pure
-    # dispatch shims.
-    if _verb == "pick":
+    # `pick` and `video_assets` get bespoke commands (above/below): `pick` can
+    # ALSO bootstrap a project from a repo path + --entry; `video_assets` carries
+    # the extra `--no-veo` flag. The other verbs are pure dispatch shims.
+    if _verb in ("pick", "video_assets"):
         continue
     _make_verb_command(_verb, _stage_id)
 
