@@ -63,6 +63,32 @@ class BaseStage:
     def check_inputs(self, project: Project) -> None:
         """Verify upstream stages are done + approved and their outputs exist.
 
+        Finding 2 decision (Architecture MAJOR — adopted option (b), AUDIT-ONLY):
+        ----------------------------------------------------------------------
+        `inputs_hash` is recorded on each stage for AUDIT and to power
+        `shipcast <verb> --rerun` invalidation (the dispatcher compares the
+        stored `inputs_hash` against a freshly computed one to decide whether a
+        rerun is warranted). It is DELIBERATELY NOT consulted here:
+        `check_inputs` does NOT compare `inputs_hash` against the current
+        upstream file state and does NOT raise or warn on upstream
+        `inputs_hash` drift.
+
+        Why audit-only is sufficient — the human gate already bounds stale-input
+        runs. Every stage finishes in `done` and the operator must run
+        `shipcast approve <slug> <upstream_id>` (recording `human_approved_at`)
+        before any downstream stage may run. That deliberate, per-stage approval
+        is the authoritative freshness barrier; auto-blocking on `inputs_hash`
+        drift here would duplicate the gate and surface false positives on
+        innocuous mtime touches that the human has already vetted. If an
+        operator edits an upstream artifact after approving it, the operator is
+        responsible for re-running and re-approving — the `--rerun` invalidation
+        path (which DOES read `inputs_hash`) and `compute_outputs_hash`-based
+        edit detection in `approve` are where drift is acted upon, not here.
+
+        This method therefore only checks: upstream presence, `done` status,
+        `human_approved_at` non-null, and on-disk existence of declared outputs.
+        TC-20.3 asserts this audit-only behavior.
+
         Raises:
             StageInputMissing: upstream stage missing/not-done, OR upstream
                 artifact file absent on disk.
