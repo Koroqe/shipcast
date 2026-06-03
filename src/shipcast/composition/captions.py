@@ -28,6 +28,7 @@ import-purity.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -164,7 +165,7 @@ def _size_for(word: str) -> int:
 def chunk_words(
     words: list[WordDict],
     *,
-    max_per_chunk: int = 4,
+    max_per_chunk: int = 3,
     pause_threshold: float = 0.4,
 ) -> list[list[WordDict]]:
     """Group ``words`` into caption chunks of <= ``max_per_chunk`` words.
@@ -212,6 +213,79 @@ def _find_chunk(t: float, chunks: list[list[WordDict]]) -> list[WordDict] | None
 _BOTTOM_OFFSET: int = layout.snap_to_grid(FRAME_H * 0.18)
 _PAD_X, _PAD_Y, _GAP = 28, 18, 16
 
+#: Horizontal safe margin on EACH side (>= 8 % of frame width, grid-snapped).
+#: Nothing rendered may extend outside ``[_SIDE_MARGIN, FRAME_W - _SIDE_MARGIN]``.
+#: 1080 x 0.08 = 86.4 -> snapped to 88 px each side.
+_SIDE_MARGIN: int = layout.snap_to_grid(FRAME_W * 0.08)
+#: Usable horizontal band captions wrap within (~904 px).
+_USABLE_W: int = FRAME_W - 2 * _SIDE_MARGIN
+#: Vertical gap between stacked caption rows/lines (px, grid-snapped).
+_ROW_GAP: int = 16
+
+
+def _wrap[T](items: list[tuple[T, float]], usable_w: float, gap: float) -> list[list[T]]:
+    """Greedily pack ``(item, width)`` pairs into rows that fit ``usable_w``.
+
+    Each row's summed item widths plus inter-item ``gap`` must stay within
+    ``usable_w``. At least one item is placed per row even if a single item is
+    itself wider than ``usable_w`` (callers shrink such over-wide tokens up
+    front via :func:`_fit_font`, so this never causes an overflow in practice).
+
+    Args:
+        items: ordered ``(payload, rendered_width)`` pairs.
+        usable_w: the maximum row width (px).
+        gap: the horizontal gap between adjacent items (px).
+
+    Returns:
+        A list of rows; each row is a list of payloads in original order.
+    """
+    rows: list[list[T]] = []
+    cur: list[T] = []
+    cur_w = 0.0
+    for payload, width in items:
+        if cur:
+            prospective = cur_w + gap + width
+            if prospective > usable_w:
+                rows.append(cur)
+                cur = [payload]
+                cur_w = width
+                continue
+            cur.append(payload)
+            cur_w = prospective
+        else:
+            cur = [payload]
+            cur_w = width
+    if cur:
+        rows.append(cur)
+    return rows
+
+
+def _fit_font(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    size: int,
+    font_path: Path | None,
+    usable_w: float,
+) -> ImageFont.FreeTypeFont:
+    """Load ``text``'s font at ``size``, shrinking it until it fits ``usable_w``.
+
+    A single very long word at a large font can be wider than the usable band
+    on its own. Wrapping cannot help a lone token, so we reduce its font size
+    (down to a small floor) until its rendered width no longer overflows. If
+    the font is a non-scalable bitmap fallback (no ``size`` arg) we cannot
+    shrink it, so we return it as-is.
+    """
+    font = _load_font(size, font_path)
+    cur = size
+    while cur > 16 and draw.textlength(text, font=font) > usable_w:
+        cur -= 4
+        shrunk = _load_font(cur, font_path)
+        if shrunk.size == font.size:
+            # Non-scalable bitmap fallback - cannot shrink further.
+            break
+        font = shrunk
+    return font
+
 
 def render_frame(
     t: float,
@@ -255,6 +329,53 @@ def render_frame(
     return img
 
 
+@dataclass(frozen=True)
+class _Token:
+    """One inline word ready to render: text, fitted font, width, timing."""
+
+    text: str
+    font: ImageFont.FreeTypeFont
+    width: float
+    start: float
+    end: float
+
+
+def _inline_tokens(
+    draw: ImageDraw.ImageDraw,
+    words: list[WordDict],
+    base: ImageFont.FreeTypeFont,
+    base_size: int,
+    font_path: Path | None,
+) -> list[_Token]:
+    """Build per-word :class:`_Token`s, shrinking any over-wide word to fit.
+
+    Most words render at ``base``; a single word wider than :data:`_USABLE_W`
+    gets its own shrunk font so the inline run never overflows the safe band.
+    """
+    tokens: list[_Token] = []
+    for w in words:
+        text = w["word"].strip()
+        if not text:
+            continue
+        width = draw.textlength(text, font=base)
+        font = base
+        if width > _USABLE_W:
+            font = _fit_font(draw, text, base_size, font_path, _USABLE_W)
+            width = draw.textlength(text, font=font)
+        tokens.append(_Token(text, font, width, w["start_sec"], w["end_sec"]))
+    return tokens
+
+
+def _karaoke_tokens(
+    draw: ImageDraw.ImageDraw,
+    chunk: list[WordDict],
+    base: ImageFont.FreeTypeFont,
+    font_path: Path | None,
+) -> list[_Token]:
+    """All words in the chunk as inline tokens (karaoke shows the whole chunk)."""
+    return _inline_tokens(draw, chunk, base, 84, font_path)
+
+
 def _render_chip(
     draw: ImageDraw.ImageDraw,
     t: float,
@@ -262,30 +383,48 @@ def _render_chip(
     palette: Palette,
     font_path: Path | None,
 ) -> None:
-    """Varied-size rounded chips; the active word gets the highlight pair."""
+    """Varied-size rounded chips; the active word gets the highlight pair.
+
+    Chips are greedily packed into rows no wider than :data:`_USABLE_W` and the
+    rows are stacked bottom-anchored so the block never overflows the safe
+    horizontal band ``[_SIDE_MARGIN, FRAME_W - _SIDE_MARGIN]``.
+    """
+    # A chip's full geometry plus a per-chip usable budget (its own chip must
+    # fit inside _USABLE_W even when it is the only chip on its row).
     chips: list[tuple[str, ImageFont.FreeTypeFont, int, int, bool]] = []
     for w in chunk:
         text = w["word"].strip()
         if not text:
             continue
-        font = _load_font(_size_for(text), font_path)
+        size = _size_for(text)
+        # Shrink the font so the chip (text + horizontal padding) fits the band.
+        font = _fit_font(draw, text, size, font_path, _USABLE_W - _PAD_X * 2)
         text_w = draw.textlength(text, font=font)
         chip_w = int(text_w + _PAD_X * 2)
-        chip_h = int(_size_for(text) + _PAD_Y * 2)
+        chip_h = int(font.size + _PAD_Y * 2)
         active = w["start_sec"] <= t <= w["end_sec"]
         chips.append((text, font, chip_w, chip_h, active))
     if not chips:
         return
-    total_w = sum(c[2] for c in chips) + _GAP * (len(chips) - 1)
-    max_h = max(c[3] for c in chips)
-    x = (FRAME_W - total_w) // 2
-    y_top = FRAME_H - _BOTTOM_OFFSET
-    for text, font, cw, ch, active in chips:
-        chip_y = y_top + (max_h - ch) // 2
-        bg, fg = palette["active"] if active else palette["inactive"]
-        draw.rounded_rectangle([x, chip_y, x + cw, chip_y + ch], radius=24, fill=bg)
-        draw.text((x + cw // 2, chip_y + ch // 2), text, font=font, fill=fg, anchor="mm")
-        x += cw + _GAP
+    rows = _wrap([(c, float(c[2])) for c in chips], _USABLE_W, _GAP)
+    # Each row's height is its tallest chip; the stacked block is bottom-anchored
+    # at FRAME_H - _BOTTOM_OFFSET, earlier rows sitting above with _ROW_GAP.
+    row_heights = [max(c[3] for c in row) for row in rows]
+    block_h = sum(row_heights) + _ROW_GAP * (len(rows) - 1)
+    bottom = FRAME_H - _BOTTOM_OFFSET + max(row_heights)
+    y = bottom - block_h
+    for row, row_h in zip(rows, row_heights, strict=True):
+        row_w = sum(c[2] for c in row) + _GAP * (len(row) - 1)
+        x = (FRAME_W - row_w) // 2
+        for text, font, cw, ch, active in row:
+            chip_y = y + (row_h - ch) // 2
+            bg, fg = palette["active"] if active else palette["inactive"]
+            draw.rounded_rectangle([x, chip_y, x + cw, chip_y + ch], radius=24, fill=bg)
+            draw.text(
+                (x + cw // 2, chip_y + ch // 2), text, font=font, fill=fg, anchor="mm"
+            )
+            x += cw + _GAP
+        y += row_h + _ROW_GAP
 
 
 def _render_karaoke(
@@ -295,26 +434,35 @@ def _render_karaoke(
     palette: Palette,
     font_path: Path | None,
 ) -> None:
-    """Single inline word run; only the spoken word is highlighted (active fg)."""
-    font = _load_font(84, font_path)
+    """Single inline word run; only the spoken word is highlighted (active fg).
+
+    The run is wrapped into LINES no wider than :data:`_USABLE_W`; the lines are
+    stacked bottom-anchored so nothing overflows the safe band. A lone word
+    wider than the band is shrunk to fit.
+    """
+    base = _load_font(84, font_path)
+    space_w = draw.textlength(" ", font=base)
     active_fg = palette["active"][0]
     inactive_fg = palette["inactive"][0]
-    texts = [w["word"].strip() for w in chunk if w["word"].strip()]
-    if not texts:
+    words = _karaoke_tokens(draw, chunk, base, font_path)
+    if not words:
         return
-    space_w = draw.textlength(" ", font=font)
-    widths = [draw.textlength(tx, font=font) for tx in texts]
-    total_w = sum(widths) + space_w * (len(texts) - 1)
-    x = (FRAME_W - total_w) / 2
-    y = FRAME_H - _BOTTOM_OFFSET
-    visible = [w for w in chunk if w["word"].strip()]
-    for w, tx, tw in zip(visible, texts, widths, strict=True):
-        active = w["start_sec"] <= t <= w["end_sec"]
-        fill = active_fg if active else inactive_fg
-        layout.draw_outlined(
-            draw, tx, (x, y), font, fill, stroke_width=5, anchor="lt"
-        )
-        x += tw + space_w
+    # Wrap on word width + one trailing space worth of advance.
+    rows = _wrap([(tok, tok.width + space_w) for tok in words], _USABLE_W, 0.0)
+    line_h = int(base.size * 1.25)
+    block_h = line_h * len(rows) + _ROW_GAP * (len(rows) - 1)
+    y = FRAME_H - _BOTTOM_OFFSET + line_h - block_h
+    for row in rows:
+        row_w = sum(tok.width for tok in row) + space_w * (len(row) - 1)
+        x = (FRAME_W - row_w) / 2
+        for tok in row:
+            active = tok.start <= t <= tok.end
+            fill = active_fg if active else inactive_fg
+            layout.draw_outlined(
+                draw, tok.text, (x, y), tok.font, fill, stroke_width=5, anchor="lt"
+            )
+            x += tok.width + space_w
+        y += line_h + _ROW_GAP
 
 
 def _render_reveal(
@@ -325,32 +473,41 @@ def _render_reveal(
     palette: Palette,
     font_path: Path | None,
 ) -> None:
-    """Words fade/scale in as they are spoken - progressive reveal."""
-    font = _load_font(84, font_path)
+    """Words fade/scale in as they are spoken - progressive reveal.
+
+    The spoken-so-far run is wrapped into LINES no wider than :data:`_USABLE_W`
+    and stacked bottom-anchored; each word keeps its per-word fade-in. A lone
+    word wider than the band is shrunk to fit.
+    """
+    base = _load_font(84, font_path)
     fg = palette["active"][0]
-    space_w = draw.textlength(" ", font=font)
+    space_w = draw.textlength(" ", font=base)
     spoken = [w for w in chunk if w["word"].strip() and w["start_sec"] <= t + 0.15]
     if not spoken:
         return
-    texts = [w["word"].strip() for w in spoken]
-    widths = [draw.textlength(tx, font=font) for tx in texts]
-    total_w = sum(widths) + space_w * (len(texts) - 1)
-    x = (FRAME_W - total_w) / 2
-    y = FRAME_H - _BOTTOM_OFFSET
-    for w, tx, tw in zip(spoken, texts, widths, strict=True):
-        # Fade-in alpha over the word's first 0.2 s of life.
-        age = max(0.0, t - w["start_sec"])
-        alpha = int(min(1.0, age / 0.2) * 255) if w["start_sec"] <= t else 255
-        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ldraw = ImageDraw.Draw(layer)
-        layout.draw_outlined(
-            ldraw, tx, (x, y), font, fg, stroke_width=5, anchor="lt"
-        )
-        if alpha < 255:
-            faded = layer.getchannel("A").point(lambda a, m=alpha: a * m // 255)
-            layer.putalpha(faded)
-        img.alpha_composite(layer)
-        x += tw + space_w
+    tokens = _inline_tokens(draw, spoken, base, 84, font_path)
+    rows = _wrap([(tok, tok.width + space_w) for tok in tokens], _USABLE_W, 0.0)
+    line_h = int(base.size * 1.25)
+    block_h = line_h * len(rows) + _ROW_GAP * (len(rows) - 1)
+    y = FRAME_H - _BOTTOM_OFFSET + line_h - block_h
+    for row in rows:
+        row_w = sum(tok.width for tok in row) + space_w * (len(row) - 1)
+        x = (FRAME_W - row_w) / 2
+        for tok in row:
+            # Fade-in alpha over the word's first 0.2 s of life.
+            age = max(0.0, t - tok.start)
+            alpha = int(min(1.0, age / 0.2) * 255) if tok.start <= t else 255
+            layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            ldraw = ImageDraw.Draw(layer)
+            layout.draw_outlined(
+                ldraw, tok.text, (x, y), tok.font, fg, stroke_width=5, anchor="lt"
+            )
+            if alpha < 255:
+                faded = layer.getchannel("A").point(lambda a, m=alpha: a * m // 255)
+                layer.putalpha(faded)
+            img.alpha_composite(layer)
+            x += tok.width + space_w
+        y += line_h + _ROW_GAP
 
 
 # --------------------------------------------------------------------------- #
