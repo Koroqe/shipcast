@@ -1,0 +1,38 @@
+# shipcast — committed defaults. Per-project overrides live in projects/<slug>/input.yaml.
+# Secrets (API keys) live in .env and are never written into this file or into manifest config_snapshot.
+
+[models]
+anthropic_model = "claude-opus-4-7"
+gemini_image_model = "imagen-4.0-generate-001"
+gemini_multimodal_model = "gemini-2.5-pro"
+gemini_veo_model = "veo-3-fast"
+
+[voice]
+elevenlabs_voice_id = ""  # operator sets per brand in _brand/<slug>/voice.md
+elevenlabs_model = "eleven_multilingual_v2"
+
+[video]
+default_mode = "standard"  # "standard" | "premium"
+showcase_min_sec = 15
+showcase_max_sec = 25
+loop_sec = 6
+beats_per_video = 4
+
+[graphics]
+aspect_ratios = ["1:1", "16:9", "9:16", "4:5"]
+og_dimensions = [1200, 630]
+carousel_dimensions = [1080, 1350]
+carousel_slide_count = 6
+
+[cost]
+max_usd_standard = 3.0
+max_usd_premium = 8.0
+veo_fast_clip_usd = 3.20
+imagen_image_usd = 0.04
+gemini_multimodal_call_usd = 0.01
+elevenlabs_per_minute_usd = 0.30
+
+[paths]
+projects_root = "projects"
+brand_root = "projects/_brand"
+template_root = "projects/_template"

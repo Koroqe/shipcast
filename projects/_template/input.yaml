@@ -1,0 +1,36 @@
+# shipcast input.yaml skeleton.
+# Copy this to projects/<repo>--<entry-slug>/input.yaml and fill in.
+
+# Path to the target software project (must be under /Users/aleksei/Documents/Projects.nosync/).
+repo_path: "/Users/aleksei/Documents/Projects.nosync/getdeal-platform-monorepo"
+
+# Exact heading of the CHANGELOG.md entry this project covers.
+# Match the form: "<name>" (the part between `### ` and ` — HH:MM UTC`).
+entry_heading: "Add CSV export"
+
+# Brand slug — must match a directory under projects/_brand/<brand_slug>/
+# That directory must contain voice.md, fonts/, logo.svg (REQUIRED).
+brand_slug: "getdeal"
+
+# Optional live URL of the running app for Playwright brand-extract and
+# real-app feature screenshots. https-only; RFC1918/loopback/link-local rejected.
+# Omit to skip Playwright-based brand extract (palette.hint.json required in brand pack).
+live_url: "https://app.getdeal.example"
+
+# Video mode: "standard" (Imagen + Ken-Burns; ~$0.80/entry; $3 cap) or
+# "premium" (Veo 3 Fast hero + 3 Ken-Burns fill; ~$4/entry; $8 cap).
+video_mode: "standard"
+
+# Optional feature walkthrough for s02_enrich screenshots. Each step has:
+#   action: one of [goto, click, type, wait, screenshot]
+#   selector: CSS selector (no javascript: schemes)
+#   value: action-dependent (URL for goto, text for type, ms for wait)
+# Omit to skip the Playwright walkthrough sub-step in s02_enrich.
+feature_walkthrough:
+  - action: goto
+    value: "https://app.getdeal.example/reports"
+  - action: click
+    selector: "[data-test=export-csv-button]"
+  - action: wait
+    value: "500"
+  - action: screenshot

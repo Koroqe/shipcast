@@ -1,0 +1,25 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Per-project artifacts (only commit the _template + _brand seeds, not generated runs)
+projects/*/
+!projects/_template/
+!projects/_brand/
+
+# Project locks
+projects/**/.lock
+projects/**/logs/
+
+# Local Claude config
+.claude/scratchpad.md
+.claude/settings.local.json

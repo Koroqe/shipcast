@@ -1,0 +1,89 @@
+[project]
+name = "shipcast"
+version = "0.1.0"
+description = "Auto-marketing factory — turns one CHANGELOG.md entry into a complete on-brand marketing package (showcase video, social posts, graphics) through an 11-stage human-gated pipeline."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Aleksei" }]
+dependencies = [
+    "typer>=0.12.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "jinja2>=3.1.3",
+    "pyyaml>=6.0.1",
+    "rich>=13.7.0",
+    "elevenlabs>=1.0.0,<2.0.0",
+    "requests>=2.31.0,<3.0.0",
+    "pillow>=12.2.0",
+    "playwright>=1.40.0,<2.0.0",
+    "pygments>=2.18.0",
+    "colormath>=3.0.0",
+]
+
+[project.optional-dependencies]
+# Slice 14 uses openai-whisper for word-level timestamps. Same Intel-Mac
+# constraints as 5-minute-library: torch < 2.3 for Intel-Mac wheels,
+# numba < 0.62 for llvmlite wheels, numpy < 2 for torch ABI.
+whisperx = [
+    "openai-whisper>=20231117",
+    "torch>=2.0,<2.3",
+    "numba<0.62",
+    "numpy<2",
+]
+
+[project.scripts]
+shipcast = "shipcast.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shipcast"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "mypy>=1.10.0",
+    "ruff>=0.5.0",
+    "types-PyYAML>=6.0.12",
+    "types-requests>=2.31.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["src/shipcast"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/shipcast"]
+explicit_package_bases = true
+mypy_path = "src"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "RUF",
+]
