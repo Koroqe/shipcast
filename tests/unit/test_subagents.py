@@ -216,13 +216,17 @@ def test_social_copywriter_snapshot_parses_to_copy_bundle() -> None:
     keys, each non-empty, 3-8 numbered tweets each <= 280 chars, no `**`, Unicode
     bold present, LinkedIn/blog within the word bounds.
     """
-    stage = copy_mod.CopyStage(
-        subprocess_run=_stub_run(json.dumps(_COPYWRITER_SNAPSHOT))
+    marker_stdout = (
+        f"<<<TWITTER>>>\n{_COPYWRITER_SNAPSHOT['twitter_thread']}\n"
+        f"<<<LINKEDIN>>>\n{_COPYWRITER_SNAPSHOT['linkedin']}\n"
+        f"<<<BLOG>>>\n{_COPYWRITER_SNAPSHOT['blog']}\n<<<END>>>\n"
     )
+    stage = copy_mod.CopyStage(subprocess_run=_stub_run(marker_stdout))
 
-    parsed = stage._invoke_subagent("social-copywriter", "write the copy")
+    stdout = stage._invoke_subagent("social-copywriter", "write the copy")
+    parsed = stage._parse_sections(stdout)
 
-    # Parsed JSON shape — exactly the CopyBundle keys, nothing extra.
+    # Parsed shape — exactly the CopyBundle keys, nothing extra.
     assert set(parsed.keys()) == {"twitter_thread", "linkedin", "blog"}
 
     bundle = CopyBundle.model_validate(parsed)

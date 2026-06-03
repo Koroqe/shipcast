@@ -68,7 +68,6 @@ from shipcast.marketing import hooks
 from shipcast.schemas import CopyBundle
 from shipcast.stage import StageResult
 from shipcast.stages._base import BaseStage
-from shipcast.subagent_json import extract_json_object
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -77,6 +76,16 @@ if TYPE_CHECKING:
 
 #: Wall-clock budget for the social-copywriter sub-agent invocation.
 _SUBAGENT_TIMEOUT_SEC: int = 300
+
+#: Unique marker lines delimiting the three artifacts in the copywriter's
+#: plain-text stdout. Markers cannot appear in normal copy, so each section's
+#: raw text (incl. the blog's own ``` code fences) is captured verbatim — far
+#: more robust than one JSON object whose long-form string values would carry
+#: invalid literal newlines.
+_M_TWITTER = "<<<TWITTER>>>"
+_M_LINKEDIN = "<<<LINKEDIN>>>"
+_M_BLOG = "<<<BLOG>>>"
+_M_END = "<<<END>>>"
 
 #: CopyBundle field -> output filename + the brief channel key whose hook it
 #: must open with. Order is the write order (deterministic).
@@ -131,20 +140,21 @@ class CopyStage(BaseStage):
         return path.read_text(encoding="utf-8")
 
     # ------------------------------------------------------------- sub-agent
-    def _invoke_subagent(self, agent: str, prompt: str) -> dict[str, object]:
-        """Run one ``claude -p --agent <agent>`` call and parse its JSON stdout.
+    def _invoke_subagent(self, agent: str, prompt: str) -> str:
+        """Run one plain ``claude -p`` call and return its raw stdout text.
+
+        Copy is three LONG-FORM documents. Forcing them through one JSON object
+        is fragile — the model embeds literal newlines (and the blog's own
+        ``````` code fences) inside JSON string values, which is
+        invalid JSON. So the contract is marker-delimited PLAIN TEXT (see
+        :meth:`_parse_sections`) rather than JSON: raw newlines and nested code
+        fences are then harmless. ``agent`` is retained only as the error label.
 
         Raises:
             SubagentTimeout: the subprocess exceeded the 300 s budget.
             SubagentFailed: the subprocess exited non-zero (stderr captured).
-            SubagentMalformedOutput: stdout was not a JSON object.
         """
         try:
-            # Plain `claude -p` (default agent): the tailored social-copywriter
-            # agent has Write/Edit tools and tends to WRITE files under
-            # `claude -p` instead of printing JSON to stdout. The prompt is
-            # self-contained, so a plain stdout-JSON call is the reliable shape.
-            # `agent` is retained only as the error label.
             result = self._subprocess_run(
                 [
                     "claude",
@@ -165,17 +175,41 @@ class CopyStage(BaseStage):
         if result.returncode != 0:
             raise SubagentFailed(agent, result.returncode, result.stderr or "")
 
-        try:
-            parsed = json.loads(extract_json_object(result.stdout))
-        except json.JSONDecodeError as exc:
+        return result.stdout or ""
+
+    # ------------------------------------------------------------- parse
+    @staticmethod
+    def _parse_sections(text: str) -> dict[str, str]:
+        """Split marker-delimited stdout into the three CopyBundle fields.
+
+        The copywriter emits each artifact between unique marker lines
+        (``<<<TWITTER>>>`` / ``<<<LINKEDIN>>>`` / ``<<<BLOG>>>`` / ``<<<END>>>``).
+        Markers cannot appear in normal copy, so each section's raw text — with
+        ordinary line breaks and the blog's own code fences — is captured
+        verbatim. Raises :class:`SubagentMalformedOutput` if any marker is
+        missing or out of order, so the stage fails cleanly with no files.
+        """
+        order = [_M_TWITTER, _M_LINKEDIN, _M_BLOG, _M_END]
+        positions: list[int] = []
+        for marker in order:
+            idx = text.find(marker)
+            if idx == -1:
+                raise SubagentMalformedOutput(
+                    f"social-copywriter output is missing the {marker!r} marker"
+                )
+            positions.append(idx)
+        if not (positions[0] < positions[1] < positions[2] < positions[3]):
             raise SubagentMalformedOutput(
-                f"{agent} stdout was not valid JSON: {exc}"
-            ) from exc
-        if not isinstance(parsed, dict):
-            raise SubagentMalformedOutput(
-                f"{agent} JSON must be an object, got {type(parsed).__name__}"
+                "social-copywriter markers are out of order "
+                "(expected TWITTER < LINKEDIN < BLOG < END)"
             )
-        return parsed
+        sections: dict[str, str] = {}
+        fields = ("twitter_thread", "linkedin", "blog")
+        for i, field in enumerate(fields):
+            start = positions[i] + len(order[i])
+            end = positions[i + 1]
+            sections[field] = text[start:end].strip("\n").strip()
+        return sections
 
     # ------------------------------------------------------------- prompt
     @staticmethod
@@ -184,16 +218,20 @@ class CopyStage(BaseStage):
     ) -> str:
         """Assemble the deterministic social-copywriter prompt."""
         return (
-            "Write the three marketing-copy artifacts for this changelog entry as "
-            "a single JSON object matching the CopyBundle schema. Print ONLY the "
-            "JSON object to stdout (no surrounding prose or code fence). Do NOT "
-            "use the Write/Edit tools or create files — answer purely from the "
-            "context below.\n\n"
-            "Required keys (each a non-empty string):\n"
-            "- twitter_thread: 3-8 numbered tweets, one per line ('1/ ...'), each "
-            "line <= 280 chars; Unicode mathematical bold for emphasis, NEVER "
-            "Markdown '**bold**'.\n"
-            "- linkedin: 600-1200 words; hook-first; '->'/'>' Unicode bullets (no "
+            "Write the three marketing-copy artifacts for this changelog entry. "
+            "Output them as PLAIN TEXT separated by these EXACT marker lines, "
+            "each marker alone on its own line, in this order:\n"
+            f"{_M_TWITTER}\n<the X/Twitter thread>\n{_M_LINKEDIN}\n"
+            f"<the LinkedIn post>\n{_M_BLOG}\n<the blog post>\n{_M_END}\n\n"
+            "Put each artifact's full text (with normal line breaks; the blog "
+            "MAY contain ``` code fences) between its marker and the next "
+            "marker. Output NOTHING outside the markers — no JSON, no preamble. "
+            "Do NOT use the Write/Edit tools or create files.\n\n"
+            "Channel requirements:\n"
+            "- X thread: 3-8 numbered tweets, one per line ('1/ ...'), each line "
+            "<= 280 chars; Unicode mathematical bold for emphasis, NEVER Markdown "
+            "'**bold**'.\n"
+            "- LinkedIn: 600-1200 words; hook-first; '->'/'>' Unicode bullets (no "
             "Markdown '-'/'*'); a closing question; 3-5 lowercase hashtags.\n"
             "- blog: 1200-2000 words; opens with the hook then a TL;DR block; "
             "narrative arc; fenced code blocks with a language tag.\n\n"
@@ -273,10 +311,11 @@ class CopyStage(BaseStage):
         context_json = self._read_text(project, self.CONTEXT_REL)
         voice_md = self._read_text(project, self.VOICE_REL)
 
-        parsed = self._invoke_subagent(
+        stdout = self._invoke_subagent(
             "social-copywriter",
             self._build_prompt(brief_json, entry_json, context_json, voice_md),
         )
+        parsed = self._parse_sections(stdout)
 
         # HARD channel-anatomy validation (tweet count/length, word counts, no
         # Markdown bold). Raises ValidationError before any write (TC-13.6).

@@ -141,6 +141,15 @@ def _bundle(
     }
 
 
+def _marker_stdout(bundle: dict[str, str]) -> str:
+    """Render a CopyBundle dict as the copywriter's marker-delimited stdout."""
+    return (
+        f"<<<TWITTER>>>\n{bundle['twitter_thread']}\n"
+        f"<<<LINKEDIN>>>\n{bundle['linkedin']}\n"
+        f"<<<BLOG>>>\n{bundle['blog']}\n<<<END>>>\n"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
@@ -336,7 +345,7 @@ def test_tc_13_1_happy_path_three_files_correct_lengths(
 ) -> None:
     """TC-13.1: mocked copywriter → 3 files with correct tweet count / word counts."""
     _drive_to_plan_approved(projects_root, target_repo, monkeypatch)
-    _install_copy_subprocess(monkeypatch, stdout=json.dumps(_bundle()))
+    _install_copy_subprocess(monkeypatch, stdout=_marker_stdout(_bundle()))
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
     assert result.exit_code == 0, result.output
@@ -373,7 +382,7 @@ def test_tc_13_2_each_file_opens_with_channel_hook(
 ) -> None:
     """TC-13.2: first non-blank line of each file CONTAINS hooks.render(key, entry)."""
     _drive_to_plan_approved(projects_root, target_repo, monkeypatch)
-    _install_copy_subprocess(monkeypatch, stdout=json.dumps(_bundle()))
+    _install_copy_subprocess(monkeypatch, stdout=_marker_stdout(_bundle()))
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
     assert result.exit_code == 0, result.output
@@ -410,7 +419,7 @@ def test_tc_13_3_twitter_unicode_bold_no_markdown(
 ) -> None:
     """TC-13.3: twitter_thread.md has no `**`; Unicode mathematical bold present."""
     _drive_to_plan_approved(projects_root, target_repo, monkeypatch)
-    _install_copy_subprocess(monkeypatch, stdout=json.dumps(_bundle()))
+    _install_copy_subprocess(monkeypatch, stdout=_marker_stdout(_bundle()))
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
     assert result.exit_code == 0, result.output
@@ -432,7 +441,7 @@ def test_tc_13_4_linkedin_unicode_bullets_no_markdown_markers(
 ) -> None:
     """TC-13.4: linkedin.md uses `->`/`>` bullets, no leading `- `/`* ` markers."""
     _drive_to_plan_approved(projects_root, target_repo, monkeypatch)
-    _install_copy_subprocess(monkeypatch, stdout=json.dumps(_bundle()))
+    _install_copy_subprocess(monkeypatch, stdout=_marker_stdout(_bundle()))
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
     assert result.exit_code == 0, result.output
@@ -503,7 +512,7 @@ def test_tc_13_6_word_count_violation_fails(
         bundle_kwargs["blog"] = (
             hooks.render(HOOK_BLOG, _ENTRY_FOR_HOOK) + "\n\n" + bundle_kwargs["blog"]
         )
-    _install_copy_subprocess(monkeypatch, stdout=json.dumps(_bundle(**bundle_kwargs)))
+    _install_copy_subprocess(monkeypatch, stdout=_marker_stdout(_bundle(**bundle_kwargs)))
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
     assert result.exit_code != 0, result.output
@@ -534,7 +543,7 @@ def test_tc_13_6_twitter_structure_violation_fails(
     """TC-13.6 (twitter): bad tweet count or an over-280-char tweet → FAILED."""
     _drive_to_plan_approved(projects_root, target_repo, monkeypatch)
     _install_copy_subprocess(
-        monkeypatch, stdout=json.dumps(_bundle(twitter=_twitter(**twitter_kwargs)))
+        monkeypatch, stdout=_marker_stdout(_bundle(twitter=_twitter(**twitter_kwargs)))
     )
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
@@ -552,7 +561,7 @@ def test_tc_13_3_markdown_bold_in_twitter_fails(
     hook = hooks.render(HOOK_X, _ENTRY_FOR_HOOK)
     bad_twitter = f"1/ {hook} **bold**\n2/ point\n3/ Try it. RT the first tweet."
     _install_copy_subprocess(
-        monkeypatch, stdout=json.dumps(_bundle(twitter=bad_twitter))
+        monkeypatch, stdout=_marker_stdout(_bundle(twitter=bad_twitter))
     )
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
@@ -577,7 +586,7 @@ def test_missing_hook_opening_fails(
         "3/ Try it. If this helped, RT the first tweet."
     )
     _install_copy_subprocess(
-        monkeypatch, stdout=json.dumps(_bundle(twitter=no_hook_twitter))
+        monkeypatch, stdout=_marker_stdout(_bundle(twitter=no_hook_twitter))
     )
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
@@ -615,7 +624,7 @@ def test_tc_13_9_reads_brand_copy_of_voice_md(
         assert cmd[0] == "claude"
         captured["prompt"] = cmd[-1]
         return subprocess.CompletedProcess(
-            cmd, 0, stdout=json.dumps(_bundle()), stderr=""
+            cmd, 0, stdout=_marker_stdout(_bundle()), stderr=""
         )
 
     monkeypatch.setattr(copy_mod.subprocess, "run", _fake_run)
@@ -665,13 +674,22 @@ def test_invoke_subagent_non_zero_exit_direct() -> None:
         stage._invoke_subagent("social-copywriter", "prompt")
 
 
-def test_invoke_subagent_non_object_json_direct() -> None:
-    """`_invoke_subagent` raises SubagentMalformedOutput on a JSON list stdout."""
+def test_parse_sections_missing_marker_direct() -> None:
+    """`_parse_sections` raises SubagentMalformedOutput when a marker is absent."""
     from shipcast.errors import SubagentMalformedOutput
 
-    def _run(cmd: list[str], *a: Any, **k: Any) -> Any:
-        return subprocess.CompletedProcess(cmd, 0, stdout="[1, 2, 3]", stderr="")
-
-    stage = copy_mod.CopyStage(subprocess_run=_run)
+    stage = copy_mod.CopyStage()
+    # Missing the <<<BLOG>>> marker.
+    bad = "<<<TWITTER>>>\na\n<<<LINKEDIN>>>\nb\n<<<END>>>\n"
     with pytest.raises(SubagentMalformedOutput):
-        stage._invoke_subagent("social-copywriter", "prompt")
+        stage._parse_sections(bad)
+
+
+def test_parse_sections_out_of_order_direct() -> None:
+    """`_parse_sections` raises when the markers appear out of order."""
+    from shipcast.errors import SubagentMalformedOutput
+
+    stage = copy_mod.CopyStage()
+    bad = "<<<LINKEDIN>>>\nb\n<<<TWITTER>>>\na\n<<<BLOG>>>\nc\n<<<END>>>\n"
+    with pytest.raises(SubagentMalformedOutput):
+        stage._parse_sections(bad)
