@@ -232,6 +232,24 @@ def _install_brand_clients(
     monkeypatch.setattr(brand_mod, "_default_clients_factory", _factory)
 
 
+def _band_png() -> bytes:
+    """Mostly-white screenshot with a blue band + an orange band (real PNG)."""
+    from io import BytesIO
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (200, 200), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 20, 199, 55], fill=(20, 80, 220))
+    draw.rectangle([0, 120, 199, 150], fill=(240, 140, 20))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+SCREENSHOT_PNG = _band_png()
+
+
 def _explode_clients(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicMock]:
     """Clients whose every method raises — proves they are never reached."""
     gemini = MagicMock()
@@ -240,6 +258,7 @@ def _explode_clients(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicM
     playwright.extract_css_palette.side_effect = AssertionError("palette called")
     playwright.extract_font_family.side_effect = AssertionError("font called")
     playwright.screenshot_logo.side_effect = AssertionError("logo called")
+    playwright.screenshot_page.side_effect = AssertionError("screenshot called")
     _install_brand_clients(monkeypatch, gemini=gemini, playwright=playwright)
     return gemini, playwright
 
@@ -247,17 +266,17 @@ def _explode_clients(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicM
 def _happy_clients(
     monkeypatch: pytest.MonkeyPatch, *, logo: bytes | None = REAL_PNG
 ) -> tuple[MagicMock, MagicMock]:
+    """Live-url clients: a real website screenshot drives the palette + sheet.
+
+    ``generate_image`` is wired to EXPLODE — on the live_url path Gemini must
+    never be reached (the screenshot is the style sheet).
+    """
     gemini = MagicMock()
-    gemini.generate_image.return_value = REAL_PNG
+    gemini.generate_image.side_effect = AssertionError("gemini must not be called")
     playwright = MagicMock()
-    playwright.extract_css_palette.return_value = [
-        "#112233",
-        "#445566",
-        "#778899",
-        "#aabbcc",
-        "#ddeeff",
-    ]
+    playwright.screenshot_page.return_value = SCREENSHOT_PNG
     playwright.extract_font_family.return_value = "Inter, sans-serif"
+    playwright.extract_css_palette.side_effect = AssertionError("css palette gone")
     playwright.screenshot_logo.return_value = logo
     _install_brand_clients(monkeypatch, gemini=gemini, playwright=playwright)
     return gemini, playwright
@@ -294,7 +313,14 @@ def test_tc_6_1_happy_path(
     proposal = BrandProposal.model_validate_json(proposal_path.read_text())
     assert proposal.font_family == "Inter, sans-serif"
     assert proposal.logo_detected is True
-    assert len(proposal.palette) == 5
+    # Palette is derived from the REAL website screenshot — exactly 3 distinct.
+    from shipcast.brand.extractor import palette_from_image
+
+    assert proposal.palette == palette_from_image(SCREENSHOT_PNG)
+    assert len(set(proposal.palette)) == 3
+
+    # The style sheet IS the captured website screenshot (no Gemini sheet).
+    assert sheet_path.read_bytes() == SCREENSHOT_PNG
 
     m = Manifest.load(projects_root / SLUG / "manifest.json")
     rec = m.stages["03_brand"]
@@ -305,9 +331,11 @@ def test_tc_6_1_happy_path(
         "03_brand/style_sheet.png",
         "03_brand/voice.md",
     }
-    gemini.generate_image.assert_called_once()
-    assert gemini.generate_image.call_args.kwargs["aspect_ratio"] == "1:1"
-    playwright.extract_css_palette.assert_called_once()
+    # Gemini is NEVER called on the live_url path; cost is 0.
+    gemini.generate_image.assert_not_called()
+    assert rec.metrics["cost_usd"] == 0.0
+    playwright.screenshot_page.assert_called_once()
+    playwright.extract_css_palette.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -412,7 +440,7 @@ def test_tc_6_7_style_sheet_skips_gemini(
     gemini = MagicMock()
     gemini.generate_image.side_effect = AssertionError("gemini called!")
     playwright = MagicMock()
-    playwright.extract_css_palette.return_value = ["#112233"]
+    playwright.screenshot_page.return_value = SCREENSHOT_PNG
     playwright.extract_font_family.return_value = "Inter"
     playwright.screenshot_logo.return_value = REAL_PNG
     _install_brand_clients(monkeypatch, gemini=gemini, playwright=playwright)
@@ -420,7 +448,10 @@ def test_tc_6_7_style_sheet_skips_gemini(
     result = runner.invoke(cli.app, [*_root(projects_root), "brand", SLUG])
     assert result.exit_code == 0, result.output
     gemini.generate_image.assert_not_called()
-    assert (projects_root / SLUG / "03_brand" / "style_sheet.png").read_bytes()[:4] == b"\x89PNG"
+    # Pack-supplied style sheet wins over the screenshot → it is the REAL_PNG,
+    # NOT the captured screenshot bytes.
+    sheet = projects_root / SLUG / "03_brand" / "style_sheet.png"
+    assert sheet.read_bytes() == REAL_PNG
 
 
 # --------------------------------------------------------------------------- #

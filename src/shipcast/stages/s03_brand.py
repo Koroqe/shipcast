@@ -5,8 +5,9 @@ live app into the brand contract every downstream creative stage reads:
 
 * ``03_brand/proposal.json`` — :class:`BrandProposal` (palette / font / logo flag).
 * ``03_brand/logo.png``      — the live-app logo, OR a 1x1 transparent placeholder.
-* ``03_brand/style_sheet.png`` — a Gemini-generated 1:1 style sheet (or the
-  operator-supplied one copied verbatim when the pack already has it).
+* ``03_brand/style_sheet.png`` — the REAL website first-screen screenshot when a
+  ``live_url`` is present, the operator-supplied sheet copied verbatim when the
+  pack ships one, or (only when neither exists) a Gemini-generated 1:1 sheet.
 * ``03_brand/voice.md``      — a COPY of ``_brand/<slug>/voice.md`` (Finding 1).
 
 ``run`` flow (UC-4):
@@ -14,16 +15,22 @@ live app into the brand contract every downstream creative stage reads:
 1. Validate the brand pack — :class:`BrandPackIncomplete` (listing every missing
    REQUIRED file) BEFORE any external API call. ``check_inputs`` performs this so
    an incomplete pack never reaches ``run`` / costs money (TC-6.2..6.5).
-2. Palette + font:
-   * IF ``palette.hint.json`` is present → use its three values directly and SKIP
-     the Playwright extract ENTIRELY (no navigation, no SSRF surface — UC-4-A1).
-   * ELSE → validate ``live_url`` (the Playwright client re-validates before any
-     ``goto``) and extract the top-≤5 hex palette + body font.
-3. Logo — ``screenshot_logo``; on ``None`` write a 1x1 transparent PNG and set
+2. Screenshot — when ``live_url`` is present, capture the first-screen viewport
+   ONCE (the Playwright client re-validates the URL before any ``goto``). The
+   single screenshot feeds BOTH the style sheet and the palette below.
+3. Palette + font:
+   * IF ``palette.hint.json`` is present → use its three values directly (operator
+     override — no screenshot needed for the palette).
+   * ELSE IF ``live_url`` present → derive the palette from the website
+     SCREENSHOT (``extractor.palette_from_image``) and read the body font from
+     the live CSS.
+   * ELSE → raise (nothing to extract from).
+4. Logo — ``screenshot_logo``; on ``None`` write a 1x1 transparent PNG and set
    ``logo_detected=false`` (UC-4-A3).
-4. Style sheet — Gemini ``generate_image(aspect_ratio="1:1")``; SKIPPED (copied)
-   when the pack ships its own ``style_sheet.png`` (UC-4-A2).
-5. Write ``proposal.json`` (validated against :class:`BrandProposal`) and copy
+5. Style sheet — pack sheet (copy) > website screenshot (written as-is, NO paid
+   call) > Gemini ``generate_image(aspect_ratio="1:1")`` (only when there is no
+   ``live_url`` and no pack sheet).
+6. Write ``proposal.json`` (validated against :class:`BrandProposal`) and copy
    ``voice.md``.
 
 Architect MAJOR Finding 1 — voice.md read-path (remediation option (a))
@@ -98,6 +105,7 @@ class _PlaywrightLike(Protocol):
     def extract_css_palette(self, url: str) -> list[str]: ...
     def extract_font_family(self, url: str) -> str: ...
     def screenshot_logo(self, url: str) -> bytes | None: ...
+    def screenshot_page(self, url: str) -> bytes: ...
 
 
 class _ClientsBundle(Protocol):
@@ -260,14 +268,28 @@ class BrandStage(BaseStage):
         stage_dir = project.stage_dir(self.id)
         stage_dir.mkdir(parents=True, exist_ok=True)
 
-        # (a) palette + font — palette.hint.json SKIPS Playwright entirely.
-        palette, font_family = self._resolve_palette_and_font(spec, pack, clients)
+        # (0) Capture the website's first screen ONCE when a live_url is present.
+        # The single screenshot is reused for BOTH the style sheet and the
+        # palette — no second navigation, no paid Gemini call on this path. The
+        # Playwright client re-validates the URL (SSRF) before navigating.
+        screenshot: bytes | None = None
+        if spec.live_url is not None:
+            screenshot = clients.playwright.screenshot_page(str(spec.live_url))
+
+        # (a) palette + font — palette.hint.json overrides; else from the
+        # screenshot when live_url is present; else error.
+        palette, font_family = self._resolve_palette_and_font(
+            spec, pack, clients, screenshot
+        )
 
         # (b) logo — None → 1x1 transparent placeholder + logo_detected=false.
         logo_detected = self._resolve_logo(project, spec, pack, clients)
 
-        # (c) style sheet — operator-supplied one SKIPS the paid Gemini call.
-        style_cost = self._resolve_style_sheet(project, pack, clients, palette)
+        # (c) style sheet — pack sheet (copy) > website screenshot (write as-is) >
+        # Gemini generation. Only the last path costs money.
+        style_cost = self._resolve_style_sheet(
+            project, pack, clients, palette, screenshot
+        )
 
         # (d) voice.md — Finding 1: copy as a declared, hash-covered output.
         voice_dest = project.artifact_path(self.id, self.VOICE_FILENAME)
@@ -308,26 +330,32 @@ class BrandStage(BaseStage):
         spec: InputYaml,
         pack: BrandPack,
         clients: _ClientsBundle,
+        screenshot: bytes | None,
     ) -> tuple[list[str], str]:
         """Return ``(palette, font_family)``.
 
-        ``palette.hint.json`` present → use its three values and SKIP Playwright
-        (no navigation). Otherwise validate ``live_url`` is present and extract
-        via Playwright (the client re-validates the URL before any ``goto``).
+        Policy:
+
+        * ``palette.hint.json`` present → use its three values verbatim (operator
+          override). No screenshot, no extraction.
+        * ELSE ``live_url`` present → derive the palette from the REAL website
+          screenshot (already captured once in ``run``) via
+          :func:`extractor.palette_from_image`; the body font still comes from
+          the live CSS (``extract_font_family``).
+        * ELSE → there is nothing to extract from → raise ``ValueError``.
         """
         if pack.palette_hint is not None:
             hint = pack.palette_hint
             return [hint["primary"], hint["accent"], hint["neutral"]], "Inter"
 
-        if spec.live_url is None:
+        if spec.live_url is None or screenshot is None:
             raise ValueError(
                 "s03_brand requires either a palette.hint.json in the brand pack "
                 "or a live_url in input.yaml to extract the palette from"
             )
-        result = extractor.extract_palette_and_font(
-            clients.playwright, str(spec.live_url)
-        )
-        return result.palette, result.font_family
+        palette = extractor.palette_from_image(screenshot)
+        font_family = clients.playwright.extract_font_family(str(spec.live_url))
+        return palette, font_family
 
     def _resolve_logo(
         self,
@@ -364,16 +392,26 @@ class BrandStage(BaseStage):
         pack: BrandPack,
         clients: _ClientsBundle,
         palette: list[str],
+        screenshot: bytes | None,
     ) -> float:
         """Write ``03_brand/style_sheet.png``; return the cost incurred (USD).
 
-        Operator-supplied ``style_sheet.png`` in the pack → copy verbatim, SKIP
-        the paid Gemini call (returns 0.0). Otherwise generate a 1:1 style sheet
-        via Gemini (returns the Imagen unit cost).
+        Precedence (only the LAST path spends money):
+
+        1. Operator-supplied ``style_sheet.png`` in the pack → copy verbatim
+           (cost 0.0).
+        2. ``live_url`` present → write the captured website SCREENSHOT bytes
+           as the style sheet — it IS the brand's real first screen (cost 0.0,
+           NO Gemini call).
+        3. Neither → generate a 1:1 style sheet via Gemini Imagen (Imagen unit
+           cost).
         """
         dest = project.artifact_path(self.id, self.STYLE_SHEET_FILENAME)
         if pack.style_sheet is not None:
             shutil.copyfile(pack.style_sheet, dest)
+            return 0.0
+        if screenshot is not None:
+            extractor.write_png(dest, screenshot)
             return 0.0
         prompt = self._style_sheet_prompt(palette)
         image_bytes = clients.gemini.generate_image(

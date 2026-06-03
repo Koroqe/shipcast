@@ -179,6 +179,34 @@ def test_screenshot_logo_returns_bytes(public_dns: None) -> None:
     assert logo[:4] == b"\x89PNG"
 
 
+def test_screenshot_page_returns_png_bytes(public_dns: None) -> None:
+    """First-screen screenshot routes through the page and returns PNG bytes."""
+    page = _FakePage()
+    client = PlaywrightClient(page_factory=_factory(page))
+    data = client.screenshot_page(URL)
+    assert isinstance(data, (bytes, bytearray))
+    assert data[:4] == b"\x89PNG"
+    assert page.gotos == [URL]
+    assert page.closed is True
+
+
+def test_screenshot_page_private_url_rejected_before_navigation(
+    private_dns: None,
+) -> None:
+    """RFC1918-resolving URL → ValidationError; page factory never reached."""
+    client = PlaywrightClient(page_factory=_ExplodingPage)
+    with pytest.raises(ValidationError):
+        client.screenshot_page("https://internal.example.com/")
+
+
+def test_screenshot_page_timeout_raises_playwright_timeout(
+    public_dns: None,
+) -> None:
+    client = PlaywrightClient(page_factory=_timeout_factory)
+    with pytest.raises(PlaywrightTimeout):
+        client.screenshot_page(URL)
+
+
 def test_screenshot_logo_returns_none_when_absent(public_dns: None) -> None:
     page = _FakePage(logo=None)
     # Pass logo=None explicitly via a page that returns None.

@@ -174,6 +174,105 @@ def test_hint_path_png_logo_copied_and_detected(
 
 
 # --------------------------------------------------------------------------- #
+# live_url, no hint → screenshot becomes the style sheet + palette source
+# --------------------------------------------------------------------------- #
+
+
+def _band_png() -> bytes:
+    """Mostly-white screenshot with a blue band + an orange band."""
+    from io import BytesIO
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (200, 200), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 20, 199, 55], fill=(20, 80, 220))
+    draw.rectangle([0, 120, 199, 150], fill=(240, 140, 20))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_live_url_screenshot_becomes_style_sheet_and_palette(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """live_url + no hint: screenshot IS the style sheet; palette from it; no Gemini."""
+    from shipcast.brand import extractor
+
+    _seed_pack(tmp_path, logo="svg")  # no palette hint, no style_sheet
+    repo = _valid_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda host, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))],
+    )
+    project = _make_project(
+        tmp_path, live_url="https://example.com", repo_path=repo
+    )
+
+    shot = _band_png()
+    gemini = MagicMock()
+    gemini.generate_image.side_effect = AssertionError("Gemini must NOT be called")
+    playwright = MagicMock()
+    playwright.screenshot_page.return_value = shot
+    playwright.extract_font_family.return_value = "Inter, sans-serif"
+    playwright.extract_css_palette.side_effect = AssertionError("CSS palette gone")
+    playwright.screenshot_logo.return_value = REAL_PNG
+
+    result = _stage(_clients(gemini=gemini, playwright=playwright)).run(project)
+
+    assert result.status == StageStatus.DONE
+    # Style sheet == the exact screenshot bytes (NO Gemini generation).
+    sheet = (project.path / "03_brand" / "style_sheet.png").read_bytes()
+    assert sheet == shot
+    gemini.generate_image.assert_not_called()
+    playwright.extract_css_palette.assert_not_called()
+    # Screenshot taken exactly once and reused.
+    playwright.screenshot_page.assert_called_once()
+
+    proposal = BrandProposal.model_validate_json(
+        (project.path / "03_brand" / "proposal.json").read_text()
+    )
+    assert proposal.palette == extractor.palette_from_image(shot)
+    assert proposal.font_family == "Inter, sans-serif"
+    assert result.metrics["cost_usd"] == 0.0
+    assert result.metrics["palette_from_hint"] is False
+
+
+def test_live_url_with_hint_uses_hint_palette_screenshot_sheet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """live_url + palette.hint: style sheet == screenshot; palette == hint."""
+    hint = {"primary": "#FF0000", "accent": "#00FF00", "neutral": "#0000FF"}
+    _seed_pack(tmp_path, logo="png", palette_hint=hint)
+    repo = _valid_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda host, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))],
+    )
+    project = _make_project(
+        tmp_path, live_url="https://example.com", repo_path=repo
+    )
+
+    shot = _band_png()
+    gemini = MagicMock()
+    gemini.generate_image.side_effect = AssertionError("Gemini must NOT be called")
+    playwright = MagicMock()
+    playwright.screenshot_page.return_value = shot
+    playwright.screenshot_logo.return_value = REAL_PNG
+
+    result = _stage(_clients(gemini=gemini, playwright=playwright)).run(project)
+
+    proposal = BrandProposal.model_validate_json(
+        (project.path / "03_brand" / "proposal.json").read_text()
+    )
+    assert proposal.palette == ["#FF0000", "#00FF00", "#0000FF"]
+    sheet = (project.path / "03_brand" / "style_sheet.png").read_bytes()
+    assert sheet == shot
+    gemini.generate_image.assert_not_called()
+    assert result.metrics["cost_usd"] == 0.0
+
+
+# --------------------------------------------------------------------------- #
 # no hint + no live_url → ValueError (cannot extract palette)
 # --------------------------------------------------------------------------- #
 

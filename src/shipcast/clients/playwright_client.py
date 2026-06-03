@@ -256,6 +256,21 @@ class PlaywrightClient:
         finally:
             page.close()
 
+    def screenshot_page(self, url: str) -> bytes:
+        """Return the first-screen (above-the-fold) viewport screenshot as PNG.
+
+        Routes through ``_open`` so ``validate_live_url`` (the SSRF defense) runs
+        FIRST, before any navigation — identical ordering to the other
+        navigating methods. Only the initial viewport is captured (no scrolling /
+        full-page stitch); this is the brand "first screen" used as the style
+        sheet and palette source by ``s03_brand``.
+        """
+        page = self._open(url)
+        try:
+            return page.screenshot_png()
+        finally:
+            page.close()
+
     # ------------------------------------------------------------- walkthrough
     def screenshot_feature(
         self, url: str, walkthrough: list[dict[str, object]]

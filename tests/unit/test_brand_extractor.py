@@ -161,6 +161,9 @@ class _FakePlaywright:
     def screenshot_logo(self, url: str) -> bytes | None:
         return self._logo
 
+    def screenshot_page(self, url: str) -> bytes:
+        return b"\x89PNG-fake"
+
 
 def test_extract_palette_and_font() -> None:
     pw = _FakePlaywright(logo=b"")
@@ -196,3 +199,72 @@ def test_logo_none_returns_transparent_placeholder() -> None:
 def test_transparent_1x1_png_is_valid() -> None:
     data = extractor.transparent_1x1_png()
     assert data.startswith(b"\x89PNG")
+
+
+# --------------------------------------------------------------------------- #
+# extractor.palette_from_image
+# --------------------------------------------------------------------------- #
+
+
+def _png_bytes(img: object) -> bytes:
+    from io import BytesIO
+
+    buf = BytesIO()
+    img.save(buf, format="PNG")  # type: ignore[attr-defined]
+    return buf.getvalue()
+
+
+def _band_screenshot() -> bytes:
+    """Mostly-white screenshot with a blue band and an orange band.
+
+    Expected: neutral≈white (dominant background), and primary/accent drawn
+    from the two vivid bands (blue + orange).
+    """
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (200, 200), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    # Two vivid bands, each smaller than the white background.
+    draw.rectangle([0, 20, 199, 55], fill=(20, 80, 220))   # blue
+    draw.rectangle([0, 120, 199, 150], fill=(240, 140, 20))  # orange
+    return _png_bytes(img)
+
+
+def test_palette_from_image_returns_three_distinct_hex() -> None:
+    palette = extractor.palette_from_image(_band_screenshot())
+    assert len(palette) == 3
+    assert len(set(palette)) == 3
+    for hex_code in palette:
+        assert hex_code.startswith("#")
+        assert len(hex_code) == 7
+        assert hex_code == hex_code.upper()
+
+
+def test_palette_from_image_neutral_is_background() -> None:
+    """The most frequent colour (white background) is the neutral (3rd) entry."""
+    from shipcast.composition.color import delta_e_hex
+
+    palette = extractor.palette_from_image(_band_screenshot())
+    primary, accent, neutral = palette
+    # Neutral is near-white (the dominant background).
+    assert delta_e_hex(neutral, "#FFFFFF") < 10
+    # Primary + accent are the vivid bands — clearly NOT white.
+    assert delta_e_hex(primary, "#FFFFFF") > 20
+    assert delta_e_hex(accent, "#FFFFFF") > 20
+    # Primary and accent are distinct from each other (blue vs orange).
+    assert delta_e_hex(primary, accent) >= 12
+
+
+def test_palette_from_image_monochrome_falls_back_to_three_distinct() -> None:
+    """A near-solid image still yields three DISTINCT hex codes (fallback)."""
+    from PIL import Image
+
+    solid = Image.new("RGB", (64, 64), (10, 10, 10))
+    palette = extractor.palette_from_image(_png_bytes(solid))
+    assert len(palette) == 3
+    assert len(set(palette)) == 3
+
+
+def test_palette_from_image_is_deterministic() -> None:
+    png = _band_screenshot()
+    assert extractor.palette_from_image(png) == extractor.palette_from_image(png)
