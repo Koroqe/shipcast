@@ -1,0 +1,271 @@
+"""Integration + unit tests for `s09_graphics` Slice 16 — aspect cards.
+
+Owned TCs (Section 12):
+- TC-12.2 (partial): the 4 aspect cards open at their exact canonical dims
+  (1x1=1080x1080, 16x9=1920x1080, 9x16=1080x1920, 4x5=1080x1350).
+- TC-12.3: each of the 4 aspect cards passes the delta-E CIE2000
+  palette-conformance gate (quantize-5, >= 80 % within dE<10 of the 5 refs).
+- TC-12.10: `GeminiRateLimited` on the 2nd Imagen call → stage `failed`.
+
+Gemini Imagen is ALWAYS mocked: the mock returns a SOLID brand-colour PNG at the
+requested aspect ratio (a real, decodable PNG) so the card render is exercised
+end-to-end (resize + headline overlay) and the palette-conformance gate has a
+deterministic on-brand background. PIL is real.
+
+The reusable `assert_palette_conformance` helper is imported from
+`tests/unit/test_palette_conformance.py` (testing rule) and called on every card.
+"""
+
+from __future__ import annotations
+
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from shipcast.composition.color import hex_to_rgb
+from shipcast.config import Settings
+from shipcast.errors import GeminiRateLimited
+from shipcast.manifest import Manifest, StageStatus, dump_json_canonical
+from shipcast.paths import default_template_path
+from shipcast.project import Project
+from shipcast.stages.s09_graphics import GraphicsStage
+
+# Import the reusable conformance helper from the unit test module (its home).
+from tests.unit.test_palette_conformance import assert_palette_conformance
+
+# --------------------------------------------------------------------------- #
+# Pinned brand palette + brief fixtures (NOT live LLM output)
+# --------------------------------------------------------------------------- #
+
+_PRIMARY = "#1D2A41"  # deep navy
+_ACCENT = "#FF6B6B"  # coral
+_NEUTRAL = "#F4F1DE"  # cream
+_PALETTE = (_PRIMARY, _ACCENT, _NEUTRAL)
+
+_CARD_DIMS = {
+    "1x1.png": (1080, 1080),
+    "16x9.png": (1920, 1080),
+    "9x16.png": (1080, 1920),
+    "4x5.png": (1080, 1350),
+}
+
+
+def _pinned_brief() -> dict[str, Any]:
+    return {
+        "hook_template_per_channel": {
+            "x": "we_just_shipped",
+            "linkedin": "before_after",
+            "blog": "problem_aha",
+        },
+        "ctas": ["Try it today"],
+        "video_beats": [
+            {"image_prompt": f"beat {i}", "narration": f"line {i}", "duration_sec": 4.0}
+            for i in range(4)
+        ],
+        "carousel_beats": [
+            {"headline": f"Beat {i} headline", "body": ""} for i in range(4)
+        ],
+        "has_stat_card": False,
+        "has_code_screenshot": False,
+    }
+
+
+def _solid_png_bytes(rgb: tuple[int, int, int], size: tuple[int, int]) -> bytes:
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", size, rgb).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _StubGemini:
+    """Mock Gemini that returns a solid brand-PRIMARY PNG at the requested ratio."""
+
+    def __init__(self, *, rate_limit_after: int | None = None) -> None:
+        self.calls = 0
+        self._rate_limit_after = rate_limit_after
+        self.ratios_seen: list[str] = []
+
+    def generate_image(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        seed: int,
+        reference_image_bytes: bytes | None = None,
+        aspect_ratio: str = "16:9",
+    ) -> bytes:
+        self.calls += 1
+        self.ratios_seen.append(aspect_ratio)
+        if self._rate_limit_after is not None and self.calls > self._rate_limit_after:
+            raise GeminiRateLimited("HTTP 429 rate limited")
+        # Return the still at the Gemini-native size for the ratio (the stage
+        # normalises to the canonical card dims, so it need not match exactly).
+        from shipcast.clients.gemini_client import ASPECT_RATIO_DIMENSIONS
+
+        size = ASPECT_RATIO_DIMENSIONS[aspect_ratio]  # type: ignore[index]
+        return _solid_png_bytes(hex_to_rgb(_PRIMARY), size)
+
+
+class _Bundle:
+    def __init__(self, gemini: _StubGemini) -> None:
+        self.gemini = gemini
+
+
+# --------------------------------------------------------------------------- #
+# Project builder (seeds 01_pick + 03_brand + 04_plan done+approved)
+# --------------------------------------------------------------------------- #
+
+
+def _build_project(tmp_path: Path) -> Project:
+    root = tmp_path / "projects"
+    root.mkdir()
+    proj = Project.create(
+        root,
+        "entry",
+        {},
+        settings=Settings(),
+        template_path=default_template_path(),
+    )
+    proj.input_path.write_text(
+        "repo_path: /tmp\nentry_heading: X\nbrand_slug: test-brand\n", encoding="utf-8"
+    )
+
+    # 01_pick/entry.json — supplies the headline.
+    pick_dir = proj.stage_dir("01_pick")
+    pick_dir.mkdir(parents=True, exist_ok=True)
+    (pick_dir / "entry.json").write_text(
+        dump_json_canonical(
+            {"name": "Add CSV export", "date": "2026-06-02", "summary": "", "details": ""}
+        ),
+        encoding="utf-8",
+    )
+
+    # 03_brand/proposal.json — supplies the 3-colour palette.
+    brand_dir = proj.stage_dir("03_brand")
+    brand_dir.mkdir(parents=True, exist_ok=True)
+    (brand_dir / "proposal.json").write_text(
+        dump_json_canonical(
+            {"palette": list(_PALETTE), "font_family": "Inter", "logo_detected": True}
+        ),
+        encoding="utf-8",
+    )
+    (brand_dir / "voice.md").write_text("caption_mode: chip\n", encoding="utf-8")
+
+    # 04_plan/brief.json — pinned brief.
+    plan_dir = proj.stage_dir("04_plan")
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "brief.json").write_text(
+        dump_json_canonical(_pinned_brief()), encoding="utf-8"
+    )
+
+    # Brand pack fonts dir (no real .ttf — exercises the system-font fallback).
+    fonts = root / "_brand" / "test-brand" / "fonts"
+    fonts.mkdir(parents=True, exist_ok=True)
+
+    # Mark upstream done + approved.
+    m = Manifest.load(proj.manifest_path)
+    for sid, outs in (
+        ("01_pick", ("01_pick/entry.json",)),
+        ("03_brand", ("03_brand/proposal.json", "03_brand/voice.md")),
+        ("04_plan", ("04_plan/brief.json",)),
+    ):
+        m = m.transition(sid, StageStatus.RUNNING)
+        m = m.transition(sid, StageStatus.DONE, outputs=outs)
+        m = m.approve(sid)
+    m.save(proj.manifest_path)
+    return Project.load(root, "entry")
+
+
+def _run(proj: Project, gemini: _StubGemini) -> Any:
+    stage = GraphicsStage(clients_factory=lambda _p: _Bundle(gemini))
+    return stage.run(proj)
+
+
+# --------------------------------------------------------------------------- #
+# TC-12.2 (partial) — the 4 aspect cards exist at exact canonical dims
+# --------------------------------------------------------------------------- #
+
+
+def test_tc_12_2_aspect_card_dimensions(tmp_path: Path) -> None:
+    from PIL import Image
+
+    proj = _build_project(tmp_path)
+    gemini = _StubGemini()
+    result = _run(proj, gemini)
+    assert result.status == StageStatus.DONE
+
+    out = proj.stage_dir("09_graphics")
+    rels = {str(p) for p in result.outputs}
+    assert rels == {f"09_graphics/{name}" for name in _CARD_DIMS}
+
+    for name, dims in _CARD_DIMS.items():
+        card = out / name
+        assert card.is_file(), f"{name} missing"
+        with Image.open(card) as img:
+            assert img.size == dims, f"{name} is {img.size}, expected {dims}"
+
+    # One Imagen call per card, each at the matching ratio.
+    assert gemini.calls == 4
+    assert gemini.ratios_seen == ["1:1", "16:9", "9:16", "4:5"]
+
+
+# --------------------------------------------------------------------------- #
+# TC-12.3 — each aspect card passes ΔE-CIE2000 palette conformance
+# --------------------------------------------------------------------------- #
+
+
+def test_tc_12_3_aspect_cards_palette_conformance(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path)
+    _run(proj, _StubGemini())
+    out = proj.stage_dir("09_graphics")
+    for name in _CARD_DIMS:
+        assert_palette_conformance(out / name, _PALETTE)
+
+
+# --------------------------------------------------------------------------- #
+# TC-12.10 — GeminiRateLimited on the 2nd call → stage failure
+# --------------------------------------------------------------------------- #
+
+
+def test_tc_12_10_rate_limited_second_call_fails(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path)
+    gemini = _StubGemini(rate_limit_after=1)
+    with pytest.raises(GeminiRateLimited):
+        _run(proj, gemini)
+    # Exactly two calls made: the 1st succeeds, the 2nd raises.
+    assert gemini.calls == 2
+
+
+# --------------------------------------------------------------------------- #
+# Cost + metrics
+# --------------------------------------------------------------------------- #
+
+
+def test_metrics_record_four_imagen_calls(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path)
+    result = _run(proj, _StubGemini())
+    # 4 Imagen stills @ $0.04 = $0.16.
+    assert result.metrics["cost_usd"] == pytest.approx(0.16)
+    assert result.metrics["cards"] == 4
+
+
+def test_next_call_cost_is_one_imagen(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path)
+    stage = GraphicsStage()
+    assert stage.next_call_cost_usd(proj) == pytest.approx(0.04)
+
+
+# --------------------------------------------------------------------------- #
+# validate_outputs accepts the produced PNGs
+# --------------------------------------------------------------------------- #
+
+
+def test_validate_outputs_accepts_cards(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path)
+    gemini = _StubGemini()
+    result = _run(proj, gemini)
+    stage = GraphicsStage()
+    stage.validate_outputs(proj, result)  # must not raise

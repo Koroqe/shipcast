@@ -18,7 +18,6 @@ dependencies = [
     "pillow>=12.2.0",
     "playwright>=1.40.0,<2.0.0",
     "pygments>=2.18.0",
-    "colormath>=3.0.0",
 ]
 
 [project.optional-dependencies]

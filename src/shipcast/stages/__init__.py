@@ -22,6 +22,7 @@ from shipcast.stages.s05_script import ScriptStage
 from shipcast.stages.s06_video_assets import VideoAssetsStage
 from shipcast.stages.s07_voice import VoiceStage
 from shipcast.stages.s08_video import VideoStage
+from shipcast.stages.s09_graphics import GraphicsStage
 
 #: All concrete stages in pipeline order. Useful for the dispatcher and
 #: integration tests. Grows one entry per stage slice (Slice 6 onward).
@@ -34,6 +35,7 @@ ALL_STAGES: tuple[type[BaseStage], ...] = (
     VideoAssetsStage,
     VoiceStage,
     VideoStage,
+    GraphicsStage,
 )
 
 
@@ -56,6 +58,7 @@ __all__ = [
     "BaseStage",
     "BrandStage",
     "EnrichStage",
+    "GraphicsStage",
     "PickStage",
     "PlanStage",
     "ScriptStage",
