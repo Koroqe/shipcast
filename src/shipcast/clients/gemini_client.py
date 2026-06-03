@@ -22,14 +22,19 @@ Two surfaces, both single-HTTP-POST-per-call:
   429 surfaces as :class:`GeminiRateLimited` — a terminal failure the
   dispatcher records via the FAILED transition (TC-5.7).
 
-NOTE: the ``aspect_ratio`` image parameter is intentionally NOT present yet —
-it lands in Slice 9. This module keeps image generation at the fixed 16:9 / 2K
-config until then.
+Aspect ratio (Slice 9): ``generate_image`` accepts an ``aspect_ratio``
+parameter — one of ``1:1``, ``16:9``, ``9:16``, ``4:5`` or ``og`` — and maps
+each to its canonical pixel dimensions via :data:`ASPECT_RATIO_DIMENSIONS`,
+threading explicit ``imageConfig.imageSize = {"width", "height"}`` into the
+request body. The default stays ``16:9`` (1920x1080), so existing callers are
+unaffected. ``og`` (1200x630) is the social-card aspect for the OG graphic and
+has no clean aspect-ratio string, which is why the payload carries explicit
+width/height rather than an ``aspectRatio`` token.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from pydantic import SecretStr
 
@@ -56,12 +61,25 @@ _HTTP_TIMEOUT_SEC: Final[float] = 120.0
 #: Ruling 7). The image stage classifies on these via GeminiTransientError.
 _TRANSIENT_STATUS: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
 
-#: ``generationConfig.imageConfig.aspectRatio`` for image generation. Fixed at
-#: 16:9 until Slice 9 introduces the per-call ``aspect_ratio`` parameter.
-_ASPECT_RATIO: Final[str] = "16:9"
+#: The five supported image aspect ratios. ``og`` is the 1200x630 social/OG
+#: card aspect used by `s09_graphics`; the other four are canonical card sizes.
+AspectRatio = Literal["1:1", "16:9", "9:16", "4:5", "og"]
 
-#: ``generationConfig.imageConfig.imageSize`` — 2K yields ~2752x1536 images.
-_IMAGE_SIZE: Final[str] = "2K"
+#: Canonical pixel dimensions (width, height) for each supported aspect ratio.
+#: These are threaded into ``generationConfig.imageConfig.imageSize`` so the
+#: model returns an image at the exact size each downstream graphic expects
+#: (TC-12.2). The default ``generate_image`` ratio is ``16:9``.
+ASPECT_RATIO_DIMENSIONS: Final[dict[AspectRatio, tuple[int, int]]] = {
+    "1:1": (1024, 1024),
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+    "4:5": (1080, 1350),
+    "og": (1200, 630),
+}
+
+#: Default aspect ratio for `generate_image`. Kept at 16:9 so existing callers
+#: that omit ``aspect_ratio`` retain the prior behaviour.
+_DEFAULT_ASPECT_RATIO: Final[AspectRatio] = "16:9"
 
 
 class GeminiClient:
@@ -83,8 +101,15 @@ class GeminiClient:
         model: str,
         seed: int,
         reference_image_bytes: bytes | None = None,
+        aspect_ratio: AspectRatio = _DEFAULT_ASPECT_RATIO,
     ) -> bytes:
         """POST one prompt to AI Studio and return the generated image bytes.
+
+        ``aspect_ratio`` selects the output dimensions via
+        :data:`ASPECT_RATIO_DIMENSIONS`; it defaults to ``16:9`` (1920x1080) so
+        existing callers are unaffected. The chosen ``(width, height)`` is sent
+        as an explicit ``imageConfig.imageSize`` object — this covers ``og``
+        (1200x630), which has no clean aspect-ratio token.
 
         ONE HTTP call per invocation. Status classification:
 
@@ -115,14 +140,15 @@ class GeminiClient:
                     }
                 }
             )
+        width, height = ASPECT_RATIO_DIMENSIONS[aspect_ratio]
         body = {
             "contents": [{"parts": parts}],
             "generationConfig": {
                 "seed": seed,
                 "responseModalities": ["IMAGE"],
                 "imageConfig": {
-                    "aspectRatio": _ASPECT_RATIO,
-                    "imageSize": _IMAGE_SIZE,
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": {"width": width, "height": height},
                 },
             },
         }
