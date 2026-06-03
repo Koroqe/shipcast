@@ -124,9 +124,10 @@ class WhisperXClient:
         """
         # LAZY IMPORT: lives ONLY here so the rest of the CLI works for
         # operators without ``uv sync --extra whisperx``. NFR-5.2 / NFR-5.3
-        # asserted by subprocess test. mypy can't find the stub because
-        # the dependency is optional - ignore is correct, not a smell.
-        import whisper  # type: ignore[import-not-found]
+        # asserted by subprocess test. The optional `whisper` package has no
+        # type stubs; a per-module mypy override (pyproject) handles it
+        # env-independently (the inline error code flips with install state).
+        import whisper
 
         from shipcast.schemas import WordTimestamp  # Slice 3 dependency (lazy)
 

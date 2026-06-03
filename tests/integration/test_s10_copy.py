@@ -574,12 +574,17 @@ def test_tc_13_3_markdown_bold_in_twitter_fails(
 # --------------------------------------------------------------------------- #
 
 
-def test_missing_hook_opening_fails(
+def test_paraphrased_hook_opening_is_advisory(
     projects_root: Path, target_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A channel whose first line omits the chosen hook → FAILED, no files."""
+    """A channel that paraphrases (not verbatim) the hook still SUCCEEDS.
+
+    The hook-opening check is advisory (real LLM copy paraphrases the hook); it
+    is enforced in the prompt and logged on a verbatim miss, never failing the
+    stage. The brief still carries a valid hook mapping (the structural check).
+    """
     _drive_to_plan_approved(projects_root, target_repo, monkeypatch)
-    # Twitter thread that is length-valid but does NOT open with the x hook.
+    # Length-valid twitter that does NOT contain the verbatim x hook.
     no_hook_twitter = (
         "1/ Random opening with no hook here.\n"
         "2/ Second point.\n"
@@ -590,13 +595,27 @@ def test_missing_hook_opening_fails(
     )
 
     result = runner.invoke(cli.app, [*_root(projects_root), "copy", SLUG])
-    assert result.exit_code != 0, result.output
-    assert not (_copy_dir(projects_root) / "twitter_thread.md").exists()
+    assert result.exit_code == 0, result.output
+    assert (_copy_dir(projects_root) / "twitter_thread.md").is_file()
     m = Manifest.load(projects_root / SLUG / "manifest.json")
-    rec = m.stages["10_copy"]
-    assert rec.status == StageStatus.FAILED
-    assert rec.error is not None
-    assert rec.error.type == "SubagentMalformedOutput"
+    assert m.stages["10_copy"].status == StageStatus.DONE
+
+
+def test_broken_brief_hook_map_still_fails_direct() -> None:
+    """The STRUCTURAL hook-mapping check stays HARD: a broken brief raises."""
+    from shipcast.errors import SubagentMalformedOutput
+    from shipcast.schemas import CopyBundle
+
+    stage = copy_mod.CopyStage()
+    bundle = CopyBundle.model_validate(_bundle())
+    # Brief with no hook_template_per_channel mapping at all.
+    with pytest.raises(SubagentMalformedOutput):
+        stage._assert_hook_openings(bundle, {}, _ENTRY_FOR_HOOK)
+    # Brief whose mapping is missing a channel key.
+    with pytest.raises(SubagentMalformedOutput):
+        stage._assert_hook_openings(
+            bundle, {"hook_template_per_channel": {"x": HOOK_X}}, _ENTRY_FOR_HOOK
+        )
 
 
 # --------------------------------------------------------------------------- #

@@ -51,6 +51,7 @@ sub-agent ``run()`` call.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
@@ -63,6 +64,7 @@ from shipcast.errors import (
     SubagentMalformedOutput,
     SubagentTimeout,
 )
+from shipcast.logging_setup import LOGGER_NAME
 from shipcast.manifest import StageStatus
 from shipcast.marketing import hooks
 from shipcast.schemas import CopyBundle
@@ -276,11 +278,19 @@ class CopyStage(BaseStage):
         brief: dict[str, object],
         entry: dict[str, object],
     ) -> None:
-        """Each channel's first non-blank line must CONTAIN its chosen hook.
+        """Validate the brief's hook mapping; advisory-check each channel opening.
 
-        Raises :class:`SubagentMalformedOutput` (so the stage fails cleanly,
-        leaving no ``.md`` files) when a channel does not open with the rendered
-        hook for that channel (FR-12.4 / TC-13.2).
+        The STRUCTURAL part is HARD: the brief must carry a
+        ``hook_template_per_channel`` mapping with a template key for every
+        channel (a broken brief raises :class:`SubagentMalformedOutput`).
+
+        The hook-OPENING part is ADVISORY: requiring the copy's first line to
+        contain the verbatim ``hooks.render(...)`` string is incompatible with
+        real LLM copy, which legitimately PARAPHRASES the hook rather than
+        pasting a long auto-generated sentence. The chosen hook is enforced in
+        the copywriter PROMPT; here we only LOG when the verbatim opener is
+        absent so the operator can eyeball it at the human gate, never failing
+        the stage on a paraphrase.
         """
         hook_map = brief.get("hook_template_per_channel")
         if not isinstance(hook_map, dict):
@@ -289,6 +299,7 @@ class CopyStage(BaseStage):
                 "channel hook openings"
             )
 
+        logger = logging.getLogger(LOGGER_NAME)
         for field_name, _filename, channel in _CHANNELS:
             key = hook_map.get(channel)
             if not isinstance(key, str):
@@ -301,10 +312,13 @@ class CopyStage(BaseStage):
                 (line for line in body.splitlines() if line.strip()), ""
             )
             if expected not in first_line:
-                raise SubagentMalformedOutput(
-                    f"{field_name} must open with the {channel!r} hook "
-                    f"({key!r}); expected opening line to contain "
-                    f"{expected!r}, got {first_line!r}"
+                logger.warning(
+                    "hook opening (advisory): %s did not include the verbatim "
+                    "%r hook (%r); the copy may paraphrase it — review at the "
+                    "human gate.",
+                    field_name,
+                    channel,
+                    key,
                 )
 
     # ------------------------------------------------------------- run

@@ -71,6 +71,15 @@ files = ["src/shipcast"]
 explicit_package_bases = true
 mypy_path = "src"
 
+# `openai-whisper` (the optional `whisperx` extra) ships no type stubs / py.typed.
+# Whether it is installed varies by environment (it needs Python 3.12 + the
+# extra), so the inline error code flips between import-not-found and
+# import-untyped. A per-module override is env-independent and keeps the lazy
+# `import whisper` in whisperx_client.py clean under --strict.
+[[tool.mypy.overrides]]
+module = ["whisper", "whisper.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
