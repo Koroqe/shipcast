@@ -97,6 +97,18 @@ class FfmpegAssembleFailed(ShipcastError):
         super().__init__(f"ffmpeg exit {returncode}: {stderr_tail}")
 
 
+class CostCapExceeded(ShipcastError):
+    """The next paid API call would push accumulated cost over the project cap.
+
+    Raised by the dispatcher as a TRUE pre-condition — BEFORE the stage's
+    `run()` (and therefore before any paid client is constructed or invoked).
+    The stage transitions to `failed` with `error.type = "CostCapExceeded"`
+    and the accumulated cost does not increase (UC-20 / FR-1.28). The check is
+    strict (`projected > cap`): a projected total exactly equal to the cap is
+    allowed.
+    """
+
+
 class MissingApiKey(ShipcastError):
     """An external-API client was instantiated without its required key.
 

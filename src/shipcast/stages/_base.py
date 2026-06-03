@@ -158,6 +158,22 @@ class BaseStage:
         """
         return ()
 
+    def next_call_cost_usd(self, project: Project) -> float:
+        """USD the stage's next paid API call would incur — the cost-cap charge.
+
+        The dispatcher reads this BEFORE invoking `run()` and refuses to proceed
+        (raising `CostCapExceeded`) when `accumulated + this > cap`. Returning
+        the cost here — rather than charging inside `run()` — makes the cap a
+        TRUE pre-condition: a stage that is over budget never constructs or
+        calls its (paid) client.
+
+        Default `0.0`: stages that call no paid API (pure/deterministic stages)
+        are never gated. Paid stages override this to return the unit cost of
+        the most expensive single call their `run()` would make (e.g. one
+        Imagen image, one Veo clip), sourced from `shipcast.cost` constants.
+        """
+        return 0.0
+
     def pre_run_hook(self, project: Project) -> None:
         """Test-only seam invoked by the dispatcher before `run()`.
 

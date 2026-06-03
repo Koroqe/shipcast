@@ -59,8 +59,10 @@ from rich.table import Table
 import shipcast.stages as _stages
 from shipcast import __version__
 from shipcast.clients import check_available_or_raise
+from shipcast.cost import CostLedger
 from shipcast.errors import (
     CannotApproveNonDoneStage,
+    CostCapExceeded,
     FfmpegNotFound,
     LockBypassNotAcknowledged,
     ManifestCorrupt,
@@ -615,6 +617,21 @@ def _dispatch(stage: BaseStage, slug: str, *, rerun: bool, yes: bool) -> None:
         project = project.with_manifest(new_manifest)
         project.save_manifest()
 
+        # ── Cost-cap pre-call gate (TRUE pre-condition; SEC Slice-2) ──────
+        # Computed BEFORE check_inputs/pre_run_hook/run, so a stage that is
+        # over budget never constructs or calls its (paid) client. The gated
+        # stage has not yet recorded any cost_usd — cost is written only on the
+        # DONE/NEEDS_REVIEW transition — so accumulated counts only OTHER
+        # stages and there is no double-count. (A future paid stage MUST keep
+        # this invariant: never write cost into the manifest mid-run; see the
+        # Slice-2 security review MINOR-2 guard, to be enforced when Veo/Imagen
+        # stages land in Slice 13.)
+        try:
+            _enforce_cost_cap(project, stage)
+        except CostCapExceeded as exc:
+            _record_failure(project, stage.id, exc, log_file, logger)
+            raise typer.Exit(_EXIT_STAGE_FAILURE) from exc
+
         # check_inputs.
         try:
             stage.check_inputs(project)
@@ -692,6 +709,29 @@ def _dispatch(stage: BaseStage, slug: str, *, rerun: bool, yes: bool) -> None:
 
     # ── Review Checklist (lock released by here) ──────────────────────────
     _print_review_checklist(stage, project, result)
+
+
+def _enforce_cost_cap(project: Project, stage: BaseStage) -> None:
+    """Refuse to proceed when the stage's next paid call would exceed the cap.
+
+    Pure pre-condition: reads the accumulated cost from the (RUNNING) manifest
+    and the per-tool unit cost the stage declares via `next_call_cost_usd`,
+    compares `projected > cap` (STRICT), and raises `CostCapExceeded` before any
+    client is touched. Stages declaring `0.0` (no paid call) are never blocked.
+    """
+    unit_cost = stage.next_call_cost_usd(project)
+    if unit_cost <= 0.0:
+        return
+    cap = project.settings.max_cost_usd_per_project
+    ledger = CostLedger(project.manifest)
+    if ledger.would_exceed(unit_cost, cap=cap):
+        projected = ledger.projected(unit_cost)
+        raise CostCapExceeded(
+            f"stage {stage.id!r} would push project cost to ${projected:.2f}, "
+            f"over the ${cap:.2f} cap ({project.settings.video_mode} mode). "
+            f"Accumulated=${ledger.accumulated():.2f}, next call=${unit_cost:.2f}. "
+            f"No paid API call was made."
+        )
 
 
 def _record_failure(
