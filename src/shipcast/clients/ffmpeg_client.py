@@ -1,4 +1,4 @@
-"""ffmpeg seam — used by the dispatcher's stage-10 pre-flight and by
+"""ffmpeg seam - used by the dispatcher's stage-10 pre-flight and by
 Stage 10's `AssembleVideoStage.run()` for video assembly.
 
 ``check_available_or_raise`` is the dispatcher's pre-flight check; the
@@ -6,7 +6,7 @@ dispatcher calls it BEFORE acquiring the project lock when a dispatched
 stage has ``requires_ffmpeg=True``.
 
 ``assemble`` is the module-level entry point Stage 10 calls (architect
-Ruling 2: NOT a class — mirrors ``check_available_or_raise`` and
+Ruling 2: NOT a class - mirrors ``check_available_or_raise`` and
 ``_ffmpeg_path``; the project's lazy-client invariant targets SDK
 imports + SecretStr validation, neither of which applies to a stdlib
 ``subprocess.run`` call against the ffmpeg binary).
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from shipcast.errors import FfmpegAssembleFailed, FfmpegNotFound
 
-#: Test seam — tests monkeypatch this to simulate ffmpeg presence/absence
+#: Test seam - tests monkeypatch this to simulate ffmpeg presence/absence
 #: without touching subprocess. Production code goes through `subprocess.run`.
 _WHICH: object = shutil.which
 
@@ -76,9 +76,14 @@ def _ffmpeg_path() -> Path | None:
 #: Target video framerate (must match the ``-r`` flag in ``_build_argv``).
 #: Exposed as a module constant so ``frame_align_durations`` and the argv
 #: stay in lockstep. Bumping fps trims per-cut quantization headroom
-#: linearly (33ms at 30 → 17ms at 60); the post-encode duration delta in
+#: linearly (33ms at 30 -> 17ms at 60); the post-encode duration delta in
 #: Stage 10 drops correspondingly.
 _VIDEO_FPS: int = 30
+
+#: Public alias of the target framerate for callers outside this module (e.g.
+#: Stage 08's caption-frame renderer, which must render one PNG per video frame
+#: at exactly this rate). Kept in lockstep with ``_VIDEO_FPS``.
+VIDEO_FPS: int = _VIDEO_FPS
 
 
 def frame_align_durations(durations_sec: list[float], fps: int = _VIDEO_FPS) -> list[float]:
@@ -88,7 +93,7 @@ def frame_align_durations(durations_sec: list[float], fps: int = _VIDEO_FPS) -> 
     duration to the nearest ``1/fps`` (≈33 ms at 30 fps). With 76 cuts of
     arbitrary word-boundary timestamps the per-cut rounding errors
     compound and the assembled MP4 ends up 0.5-1s shorter than the
-    narration — visible in playback as images appearing AHEAD of the
+    narration - visible in playback as images appearing AHEAD of the
     spoken word they illustrate.
 
     Pre-snapping each duration to a frame boundary eliminates rounding at
@@ -141,7 +146,7 @@ def build_concat_file(image_paths: list[Path], durations_sec: list[float]) -> st
     ``duration`` line on the last entry, assuming ffmpeg would hold the
     final image until the audio track ended and ``-shortest`` would clip
     the output. That assumption proved wrong on ffmpeg 8.x with image
-    inputs — the last image is held for ~1 frame (or some demuxer-
+    inputs - the last image is held for ~1 frame (or some demuxer-
     chosen default that empirically came in around 3.5s on atomic-
     habits), producing a video shorter than the audio. With Stage 06's
     contract that ``cuts[-1].end_sec == audio_duration_sec``, the sum
@@ -168,7 +173,7 @@ def build_concat_file(image_paths: list[Path], durations_sec: list[float]) -> st
         raise ValueError("build_concat_file requires at least one image")
     if len(image_paths) != len(durations_sec):
         raise ValueError(
-            f"build_concat_file: image_paths and durations_sec length mismatch — "
+            f"build_concat_file: image_paths and durations_sec length mismatch - "
             f"{len(image_paths)} paths vs {len(durations_sec)} durations"
         )
     lines: list[str] = []
@@ -207,7 +212,7 @@ def assemble(
     """Run ffmpeg to encode the final MP4 from a concat list + audio.
 
     ONE subprocess call per invocation. Architect Ruling 2 (module-level
-    function) + Ruling 4 (atomic temp+replace — the CALLER is expected to
+    function) + Ruling 4 (atomic temp+replace - the CALLER is expected to
     pass ``output_path`` pointing at the ``.tmp`` location; the swap to
     the final path is the caller's responsibility, mirroring stages 03/09).
 
@@ -274,7 +279,7 @@ def assemble(
 # ── Ken-Burns clip (Stage 06) ────────────────────────────────────────────
 
 
-#: Vertical showcase frame — every Stage-06 clip is exactly this size.
+#: Vertical showcase frame - every Stage-06 clip is exactly this size.
 VERTICAL_WIDTH: int = 1080
 VERTICAL_HEIGHT: int = 1920
 
@@ -421,7 +426,7 @@ def probe_video(path: Path) -> ProbeResult:
 def probe_audio_duration_sec(path: Path) -> float | None:
     """Return the container duration (seconds) of an audio file via one ffprobe.
 
-    Unlike :func:`probe_video`, this does NOT select a video stream — it reads
+    Unlike :func:`probe_video`, this does NOT select a video stream - it reads
     only the format-level ``duration``, so it works on audio-only files such as
     ``07_voice/narration.mp3``. Returns ``None`` when ffprobe reports no usable
     duration (the caller decides how to handle it).
@@ -446,6 +451,285 @@ def probe_audio_duration_sec(path: Path) -> float | None:
         return None
 
 
+# ── Stage 08 - full assembly (concat + audio mix + captions + loop) ──────
+#
+# Stage 08 assembles the four 1080x1920 Stage-06 clips into a single vertical
+# ``showcase.mp4`` with narration (optionally mixed with ducked background
+# music), burns in PIL-rendered caption frames, then exports a square 6-second
+# loop (mp4 + gif). Each function below is ONE subprocess call and a pure argv
+# builder is exposed for fast unit tests (TC-11.7 / TC-11.8).
+
+#: Narration is mixed -3 dB ABOVE the background music so the voice stays clear
+#: over the bed. We implement this by attenuating the BGM relative to narration:
+#: the BGM track is reduced so narration sits +3 dB over it (TC-11.8). Exposed as
+#: a constant so the stage and the duck filter stay in lockstep.
+NARRATION_DUCK_DB: float = 3.0
+
+#: Square loop geometry (center-cropped from the 1080x1920 hero clip).
+SQUARE_SIZE: int = 1080
+#: Loop length in seconds (first N s of the hero clip). UC-10 postcondition.
+LOOP_SECONDS: float = 6.0
+#: GIF framerate - low to keep ``loop_6s.gif`` comfortably under the 8 MB cap.
+_GIF_FPS: int = 12
+
+
+def build_concat_argv(*, concat_path: Path, output_path: Path) -> list[str]:
+    """Argv to concat the (frame-aligned, same-geometry) Stage-06 clips.
+
+    The clips are all 1080x1920 h264/30fps, so a concat-demuxer pass with a
+    light re-encode produces one continuous video-only stream. Audio is added by
+    the separate :func:`build_audio_mix_argv` pass so the duck filter logic stays
+    isolated and testable. Pure function for unit testing.
+    """
+    return [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", str(concat_path),
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-r", str(_VIDEO_FPS),
+        "-an",
+        "-movflags", "+faststart",
+        "-f", "mp4",
+        str(output_path),
+    ]
+
+
+def build_audio_mix_argv(
+    *,
+    video_path: Path,
+    narration_path: Path,
+    output_path: Path,
+    bgm_path: Path | None = None,
+    duck_db: float = NARRATION_DUCK_DB,
+) -> list[str]:
+    """Argv to mux narration (optionally + ducked BGM) onto a silent video.
+
+    * No BGM (``bgm_path is None``): narration is the sole audio track - no
+      ``amix``, no ducking filter (TC-11.7).
+    * BGM present: the music bed is attenuated by ``duck_db`` dB and mixed under
+      the narration via ``amix`` so the voice sits ``duck_db`` dB above the bed
+      (TC-11.8). The first-alphabetical track selection is the STAGE's job; this
+      builder just receives the chosen path.
+
+    ``-shortest`` caps the muxed output at the shorter of video / narration.
+    Pure function for unit testing.
+    """
+    argv = [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-i", str(video_path),
+        "-i", str(narration_path),
+    ]
+    if bgm_path is None:
+        argv += [
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+        ]
+    else:
+        argv += [
+            "-i", str(bgm_path),
+            "-filter_complex",
+            # Attenuate the BGM (input 2) by duck_db, then mix narration (1)
+            # over it. amix's first input (narration) stays at full level, so
+            # the voice ends up duck_db dB above the bed.
+            f"[2:a]volume=-{duck_db:.1f}dB[bgm];"
+            "[1:a][bgm]amix=inputs=2:duration=shortest:dropout_transition=0[aout]",
+            "-map", "0:v:0",
+            "-map", "[aout]",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+        ]
+    argv += [
+        "-shortest",
+        "-movflags", "+faststart",
+        "-f", "mp4",
+        str(output_path),
+    ]
+    return argv
+
+
+def build_caption_overlay_argv(
+    *,
+    video_path: Path,
+    frames_glob: str,
+    fps: int,
+    output_path: Path,
+) -> list[str]:
+    """Argv to composite a transparent PNG caption sequence over the video.
+
+    ``frames_glob`` is the ``-i`` pattern (e.g. ``.../f_%05d.png``) the caption
+    renderer produced at ``fps``. The original audio is copied through
+    untouched. Pure function for unit testing.
+    """
+    return [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-i", str(video_path),
+        "-framerate", str(fps),
+        "-i", frames_glob,
+        "-filter_complex", "[0:v][1:v]overlay=shortest=1:format=auto[v]",
+        "-map", "[v]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "26",
+        "-pix_fmt", "yuv420p",
+        "-r", str(fps),
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        "-f", "mp4",
+        str(output_path),
+    ]
+
+
+def build_loop_mp4_argv(*, source_path: Path, output_path: Path) -> list[str]:
+    """Argv to export the first :data:`LOOP_SECONDS` s of ``source_path``.
+
+    Center-crops the 1080x1920 hero clip to a 1080x1080 square and strips audio
+    (UC-10 postcondition: ``loop_6s.mp4`` is 6.0 s ± 0.1, 1080x1080, no audio).
+    Pure function for unit testing.
+    """
+    return [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-i", str(source_path),
+        "-t", f"{LOOP_SECONDS:.3f}",
+        "-vf", f"crop={SQUARE_SIZE}:{SQUARE_SIZE}:(iw-{SQUARE_SIZE})/2:(ih-{SQUARE_SIZE})/2",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-r", str(_VIDEO_FPS),
+        "-an",
+        "-movflags", "+faststart",
+        "-f", "mp4",
+        str(output_path),
+    ]
+
+
+def build_loop_gif_argv(*, source_path: Path, output_path: Path) -> list[str]:
+    """Argv to export a small GIF from the square loop mp4 (<= 8 MB).
+
+    Uses a generated palette + low framerate so the GIF stays well under the
+    8 MB cap. Pure function for unit testing.
+    """
+    return [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-i", str(source_path),
+        "-vf",
+        f"fps={_GIF_FPS},scale=480:480:flags=lanczos,"
+        "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+        "-f", "gif",
+        str(output_path),
+    ]
+
+
+def _run_one(argv: list[str]) -> AssembleResult:
+    """Run one ffmpeg argv; raise :class:`FfmpegAssembleFailed` on non-zero exit.
+
+    Shared by every Stage-08 pass. Mirrors :func:`assemble`'s error contract.
+    """
+    before = time.monotonic()
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    wall = round(time.monotonic() - before, 3)
+    if result.returncode != 0:
+        stderr_tail = (result.stderr or "")[-_STDERR_TAIL_CHARS:]
+        raise FfmpegAssembleFailed(returncode=result.returncode, stderr_tail=stderr_tail)
+    return AssembleResult(
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        wall_clock_sec=wall,
+    )
+
+
+def concat_clips(*, concat_path: Path, output_path: Path) -> Path:
+    """Concat the Stage-06 clips into one silent video. Returns ``output_path``."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _run_one(build_concat_argv(concat_path=concat_path, output_path=output_path))
+    return output_path
+
+
+def mix_audio(
+    *,
+    video_path: Path,
+    narration_path: Path,
+    output_path: Path,
+    bgm_path: Path | None = None,
+    duck_db: float = NARRATION_DUCK_DB,
+) -> Path:
+    """Mux narration (optionally + ducked BGM) onto ``video_path``."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _run_one(
+        build_audio_mix_argv(
+            video_path=video_path,
+            narration_path=narration_path,
+            output_path=output_path,
+            bgm_path=bgm_path,
+            duck_db=duck_db,
+        )
+    )
+    return output_path
+
+
+def overlay_captions(
+    *, video_path: Path, frames_glob: str, fps: int, output_path: Path
+) -> Path:
+    """Composite the caption PNG sequence over ``video_path``."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _run_one(
+        build_caption_overlay_argv(
+            video_path=video_path,
+            frames_glob=frames_glob,
+            fps=fps,
+            output_path=output_path,
+        )
+    )
+    return output_path
+
+
+def export_loop(*, source_path: Path, mp4_path: Path, gif_path: Path) -> tuple[Path, Path]:
+    """Export the square 6 s loop as mp4 + gif. Returns ``(mp4_path, gif_path)``."""
+    mp4_path.parent.mkdir(parents=True, exist_ok=True)
+    _run_one(build_loop_mp4_argv(source_path=source_path, output_path=mp4_path))
+    _run_one(build_loop_gif_argv(source_path=mp4_path, output_path=gif_path))
+    return mp4_path, gif_path
+
+
+def probe_audio_codec(path: Path) -> str | None:
+    """Return the first audio stream's codec name, or ``None`` if no audio.
+
+    Used by the Stage-08 integration test to assert ``showcase.mp4`` carries an
+    AAC track and ``loop_6s.mp4`` carries none.
+    """
+    argv = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(path),
+    ]
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    value = result.stdout.strip()
+    return value or None
+
+
 def _build_argv(
     *,
     concat_path: Path,
@@ -463,9 +747,9 @@ def _build_argv(
         "-i", str(audio_path),
         "-vf",
         # Three-step video filter chain:
-        # 1. scale  — fit each scene into 1920x1080 preserving aspect
-        # 2. pad    — letterbox/pillarbox to exactly 1920x1080
-        # 3. tpad   — INTERNAL safety pad: extend the video by 2 s past
+        # 1. scale  - fit each scene into 1920x1080 preserving aspect
+        # 2. pad    - letterbox/pillarbox to exactly 1920x1080
+        # 3. tpad   - INTERNAL safety pad: extend the video by 2 s past
         #             concat's reported end so libx264's B-frame lookahead
         #             (which silently drops ~0.7 s of frames at concat's
         #             tail) has room to flush. WITHOUT this the trailing
@@ -493,7 +777,7 @@ def _build_argv(
         # audio (mp3 LAME-padding + AAC frame alignment + encoder priming
         # all interact badly). The eventual `-t` caps the output at the
         # source narration's exact end, so the apad silence buffer is
-        # also trimmed off — the user never hears it.
+        # also trimmed off - the user never hears it.
         "-af", "apad=pad_dur=5",
         "-shortest",
         # Cap the muxed output at the narration's exact duration. tpad
@@ -504,7 +788,7 @@ def _build_argv(
         "-t", f"{audio_duration_sec:.3f}",
         "-movflags", "+faststart",
         # Stage 10 writes atomically to a `.tmp` path and renames on success.
-        # ffmpeg 5.x could infer the muxer from the parent stem (.mp4.tmp →
+        # ffmpeg 5.x could infer the muxer from the parent stem (.mp4.tmp ->
         # mp4); ffmpeg 8.x cannot and exits with "Unable to choose an output
         # format". Naming the muxer explicitly keeps the contract stable
         # across ffmpeg versions.
