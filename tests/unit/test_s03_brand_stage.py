@@ -58,7 +58,7 @@ def _make_project(
     monkeypatch ``schemas.ALLOWED_REPO_ROOT`` and pass a ``repo_path`` under it
     (with a CHANGELOG.md) so the full InputYaml validation in ``run`` passes.
     """
-    from dataclasses import dataclass
+    from dataclasses import dataclass, field
 
     projects_root = tmp_path / "projects"
     slug = "p"
@@ -78,10 +78,15 @@ def _make_project(
     (project_path / "input.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
 
     @dataclass
+    class _Settings:
+        gemini_image_model: str = "gemini-3-pro-image-preview"
+
+    @dataclass
     class _P:
         root: Path
         path: Path
         input_path: Path
+        settings: _Settings = field(default_factory=_Settings)
 
         def stage_dir(self, stage_id: str) -> Path:
             return self.path / stage_id

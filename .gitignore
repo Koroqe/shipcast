@@ -23,3 +23,6 @@ projects/**/logs/
 # Local Claude config
 .claude/scratchpad.md
 .claude/settings.local.json
+
+# Real operator brand packs stay local (only the _brand/ dir + .gitkeep are tracked)
+projects/_brand/*/
