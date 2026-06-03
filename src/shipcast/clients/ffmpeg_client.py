@@ -178,7 +178,11 @@ def build_concat_file(image_paths: list[Path], durations_sec: list[float]) -> st
         )
     lines: list[str] = []
     for path, duration in zip(image_paths, durations_sec, strict=True):
-        lines.append(f"file '{path}'")
+        # Absolute path: the concat demuxer resolves entries relative to the
+        # concat FILE's directory, so a project-root-relative path would be
+        # looked up under the stage dir and miss. Resolving here makes the list
+        # robust to the concat file's location and the process cwd.
+        lines.append(f"file '{path.resolve()}'")
         lines.append(f"duration {duration:.6f}")
     return "\n".join(lines) + "\n"
 
