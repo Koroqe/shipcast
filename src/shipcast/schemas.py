@@ -40,6 +40,74 @@ _ALLOWED_ACTIONS = ("goto", "click", "type", "wait", "screenshot")
 
 
 # --------------------------------------------------------------------------- #
+# Shared live_url validator (SSRF defense — reused by PlaywrightClient)
+# --------------------------------------------------------------------------- #
+
+
+def validate_live_url(url: str) -> None:
+    """Raise ``ValueError`` unless ``url`` is a safe, public ``https`` target.
+
+    This is the single source of truth for the ``live_url`` SSRF defense. The
+    :class:`InputYaml` ``live_url`` field validator delegates here, and
+    ``shipcast.clients.playwright_client.PlaywrightClient`` calls it at the top
+    of EVERY navigating method BEFORE touching the browser (Slice-8 security
+    pre-review: "URL validator runs before any ``goto()``").
+
+    Checks, in order (first failure raises):
+
+    1. Scheme MUST be ``https`` — checked FIRST so a bad scheme never triggers a
+       DNS lookup (no network side effect on scheme rejection).
+    2. A hostname MUST be present.
+    3. The hostname is resolved with :func:`socket.getaddrinfo` (IPv4 *and*
+       IPv6 — not the IPv4-only ``gethostbyname``) and EVERY resolved address is
+       rejected if it is private (RFC1918 10/8, 172.16/12, 192.168/16), loopback
+       (127/8, ``::1``), link-local (169.254/16, ``fe80::/10``), unique-local
+       IPv6 (``fc00::/7`` → ``is_private``), unspecified (``0.0.0.0``/``::``),
+       reserved, or multicast. Resolving every address closes the IPv6-only-AAAA
+       SSRF gap and lets IPv6-literal hosts (``[::1]``) reject cleanly.
+
+    Raising ``ValueError`` (not a Pydantic-specific type) keeps this a leaf
+    helper usable both inside a ``field_validator`` (Pydantic wraps it into a
+    ``ValidationError``) and directly by the Playwright client.
+    """
+    parts = urlsplit(url)
+
+    # 1. Scheme check — MUST run before any DNS lookup.
+    if parts.scheme != "https":
+        raise ValueError(
+            f"live_url must use the 'https' scheme, got {parts.scheme!r}"
+        )
+
+    host = parts.hostname
+    if not host:
+        raise ValueError("live_url must include a hostname")
+
+    # 2. Resolve the hostname to EVERY address (IPv4 + IPv6) and reject if ANY
+    #    of them is non-public.
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise ValueError(
+            f"live_url hostname {host!r} could not be resolved: {exc}"
+        ) from exc
+    for info in infos:
+        resolved = info[4][0]
+        ip = ipaddress.ip_address(resolved)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_unspecified
+            or ip.is_reserved
+            or ip.is_multicast
+        ):
+            raise ValueError(
+                f"live_url resolves to a non-public address ({resolved}) — "
+                "refusing (SSRF defense)"
+            )
+
+
+# --------------------------------------------------------------------------- #
 # WalkthroughStep
 # --------------------------------------------------------------------------- #
 
@@ -103,49 +171,9 @@ class InputYaml(BaseModel):
     def _validate_live_url(cls, v: AnyUrl | None) -> AnyUrl | None:
         if v is None:
             return v
-        url = str(v)
-        parts = urlsplit(url)
-
-        # 1. Scheme check — MUST run before any DNS lookup.
-        if parts.scheme != "https":
-            raise ValueError(
-                f"live_url must use the 'https' scheme, got {parts.scheme!r}"
-            )
-
-        host = parts.hostname
-        if not host:
-            raise ValueError("live_url must include a hostname")
-
-        # 2. Resolve the hostname to EVERY address (IPv4 + IPv6) and reject if
-        #    ANY of them is non-public. Using getaddrinfo (not gethostbyname,
-        #    which is IPv4-only) closes the IPv6-only-AAAA SSRF gap and lets
-        #    IPv6-literal hosts ([::1]) reject cleanly instead of raising an
-        #    unhandled gaierror. Rejected ranges: RFC1918 private (10/8,
-        #    172.16/12, 192.168/16), loopback (127/8, ::1), link-local
-        #    (169.254/16, fe80::/10), unique-local IPv6 (fc00::/7 → is_private),
-        #    plus 0.0.0.0/unspecified, reserved, and multicast — all of which
-        #    are SSRF targets on at least one supported platform.
-        try:
-            infos = socket.getaddrinfo(host, None)
-        except socket.gaierror as exc:
-            raise ValueError(
-                f"live_url hostname {host!r} could not be resolved: {exc}"
-            ) from exc
-        for info in infos:
-            resolved = info[4][0]
-            ip = ipaddress.ip_address(resolved)
-            if (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_unspecified
-                or ip.is_reserved
-                or ip.is_multicast
-            ):
-                raise ValueError(
-                    f"live_url resolves to a non-public address ({resolved}) — "
-                    "refusing (SSRF defense)"
-                )
+        # Delegate to the shared SSRF helper — the SAME function the Playwright
+        # client invokes before any navigation, so the defense cannot drift.
+        validate_live_url(str(v))
         return v
 
     @model_validator(mode="after")

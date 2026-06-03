@@ -28,6 +28,7 @@ __all__ = [
     "AnthropicClient",
     "ElevenLabsClient",
     "GeminiClient",
+    "PlaywrightClient",
     "WhisperXClient",
     "check_available_or_raise",
 ]
@@ -51,4 +52,8 @@ def __getattr__(name: str) -> Any:
         from shipcast.clients.gemini_client import GeminiClient
 
         return GeminiClient
+    if name == "PlaywrightClient":
+        from shipcast.clients.playwright_client import PlaywrightClient
+
+        return PlaywrightClient
     raise AttributeError(f"module 'shipcast.clients' has no attribute {name!r}")
