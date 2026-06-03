@@ -17,10 +17,16 @@ from shipcast.stages._base import BaseStage
 from shipcast.stages.s01_pick import PickStage
 from shipcast.stages.s02_enrich import EnrichStage
 from shipcast.stages.s03_brand import BrandStage
+from shipcast.stages.s04_plan import PlanStage
 
 #: All concrete stages in pipeline order. Useful for the dispatcher and
 #: integration tests. Grows one entry per stage slice (Slice 6 onward).
-ALL_STAGES: tuple[type[BaseStage], ...] = (PickStage, EnrichStage, BrandStage)
+ALL_STAGES: tuple[type[BaseStage], ...] = (
+    PickStage,
+    EnrichStage,
+    BrandStage,
+    PlanStage,
+)
 
 
 def build_downstream_map() -> dict[str, tuple[str, ...]]:
@@ -43,5 +49,6 @@ __all__ = [
     "BrandStage",
     "EnrichStage",
     "PickStage",
+    "PlanStage",
     "build_downstream_map",
 ]

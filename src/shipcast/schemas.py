@@ -350,6 +350,188 @@ class BrandProposal(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Hook catalog keys (FROZEN value space for MarketingBrief.hook_template_*)
+# --------------------------------------------------------------------------- #
+
+#: The seven hook-template keys. Duplicated here as a literal tuple (rather than
+#: imported from ``shipcast.marketing.hooks``) to keep ``schemas`` a LEAF module
+#: — it imports ONLY stdlib + pydantic (Module-Boundary Risk 1). The
+#: ``test_hooks_catalog`` unit test asserts this tuple matches
+#: ``hooks.KEYS`` exactly, so the two cannot drift.
+HOOK_TEMPLATE_KEYS: tuple[str, ...] = (
+    "we_just_shipped",
+    "before_after",
+    "problem_aha",
+    "numbered_list",
+    "behind_the_scenes",
+    "5_sec_value",
+    "social_proof",
+)
+
+
+# --------------------------------------------------------------------------- #
+# StoryboardBeat (shared: s04_plan video_beats + s05_script storyboard)
+# --------------------------------------------------------------------------- #
+
+
+class StoryboardBeat(BaseModel):
+    """One beat of the showcase storyboard.
+
+    Used by ``MarketingBrief.video_beats`` (the 4-beat skeleton the planner
+    drafts in ``s04_plan``) AND, in Slice 12, by ``Storyboard.beats`` (the
+    fleshed-out script ``s05_script`` produces). A beat pairs a visual prompt
+    with its voiceover line and an on-screen duration.
+
+    Fields:
+    * ``image_prompt`` — non-empty prompt describing the beat's visual (Imagen
+      still or Veo conditioning).
+    * ``narration`` — non-empty voiceover line for the beat.
+    * ``duration_sec`` — on-screen seconds (> 0). ``s05_script`` constrains this
+      to 3-5 s per beat; the brief skeleton only requires it be positive.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_prompt: str
+    narration: str
+    duration_sec: float
+
+    @field_validator("image_prompt", "narration")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("storyboard beat fields must be non-empty strings")
+        return v
+
+    @field_validator("duration_sec")
+    @classmethod
+    def _positive_duration(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("duration_sec must be > 0")
+        return v
+
+
+# --------------------------------------------------------------------------- #
+# CarouselBeat (s04_plan carousel_beats → s09_graphics LinkedIn carousel)
+# --------------------------------------------------------------------------- #
+
+
+class CarouselBeat(BaseModel):
+    """One of the four interior beats of the LinkedIn document carousel.
+
+    The 6-slide carousel (``s09_graphics``) maps as: slide 1 = the chosen hook,
+    slides 2-5 = these FOUR ``carousel_beats``, slide 6 = a CTA. Fixing the beat
+    count at exactly 4 means the carousel composer never pads or truncates.
+
+    Fields:
+    * ``headline`` — non-empty slide headline (large type).
+    * ``body`` — supporting line(s) for the slide (may be empty for a
+      headline-only slide).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    headline: str
+    body: str = ""
+
+    @field_validator("headline")
+    @classmethod
+    def _headline_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("carousel beat headline must be a non-empty string")
+        return v
+
+
+# --------------------------------------------------------------------------- #
+# MarketingBrief (s04_plan artifact)
+# --------------------------------------------------------------------------- #
+
+
+class MarketingBrief(BaseModel):
+    """The ``04_plan/brief.json`` artifact written by ``s04_plan``.
+
+    Produced by a CHAINED sub-agent invocation: the ``planner`` sub-agent drafts
+    the brief, then the ``brand-guardian`` sub-agent consumes that draft and
+    returns the final, voice/visual-conformant version (guardian's output wins).
+
+    Length constraints are HARD (the carousel + video pipelines depend on them):
+    * ``video_beats`` — EXACTLY 4 (one hero + three fill; drives ``s06`` /
+      Veo-clip targeting).
+    * ``carousel_beats`` — EXACTLY 4 (slide 1 = hook, slides 2-5 = these,
+      slide 6 = CTA -> a clean 6-slide carousel with no padding).
+
+    Fields:
+    * ``hook_template_per_channel`` — one hook-catalog key per channel; every
+      value MUST be one of :data:`HOOK_TEMPLATE_KEYS`.
+    * ``ctas`` — at least one call-to-action string.
+    * ``video_beats`` — the 4-beat showcase skeleton.
+    * ``carousel_beats`` — the 4 interior carousel beats.
+    * ``has_stat_card`` — whether ``s09_graphics`` should render the stat card.
+    * ``has_code_screenshot`` — whether ``s09_graphics`` should render the
+      code screenshot (Pygments/Ray.so).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hook_template_per_channel: dict[Literal["x", "linkedin", "blog"], str]
+    ctas: list[str]
+    video_beats: list[StoryboardBeat]
+    carousel_beats: list[CarouselBeat]
+    has_stat_card: bool
+    has_code_screenshot: bool
+
+    @field_validator("hook_template_per_channel")
+    @classmethod
+    def _hooks_in_catalog(
+        cls, v: dict[str, str]
+    ) -> dict[str, str]:
+        for channel, key in v.items():
+            if key not in HOOK_TEMPLATE_KEYS:
+                raise ValueError(
+                    f"hook_template_per_channel[{channel!r}]={key!r} is not a "
+                    f"catalog key; allowed: {HOOK_TEMPLATE_KEYS}"
+                )
+        for required_channel in ("x", "linkedin", "blog"):
+            if required_channel not in v:
+                raise ValueError(
+                    f"hook_template_per_channel must include channel "
+                    f"{required_channel!r}"
+                )
+        return v
+
+    @field_validator("ctas")
+    @classmethod
+    def _ctas_non_empty(cls, v: list[str]) -> list[str]:
+        if not v or not any(c.strip() for c in v):
+            raise ValueError("ctas must contain at least one non-empty string")
+        return v
+
+    @field_validator("video_beats")
+    @classmethod
+    def _exactly_four_video_beats(
+        cls, v: list[StoryboardBeat]
+    ) -> list[StoryboardBeat]:
+        if len(v) != 4:
+            raise ValueError(
+                f"video_beats must contain EXACTLY 4 beats (1 hero + 3 fill), "
+                f"got {len(v)}"
+            )
+        return v
+
+    @field_validator("carousel_beats")
+    @classmethod
+    def _exactly_four_carousel_beats(
+        cls, v: list[CarouselBeat]
+    ) -> list[CarouselBeat]:
+        if len(v) != 4:
+            raise ValueError(
+                f"carousel_beats must contain EXACTLY 4 beats (slides 2-5), "
+                f"got {len(v)}"
+            )
+        return v
+
+
+# --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 
