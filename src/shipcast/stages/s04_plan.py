@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from shipcast.project import Project
 
 #: Wall-clock budget for EACH sub-agent invocation (planner, brand-guardian).
-_SUBAGENT_TIMEOUT_SEC: int = 300
+_SUBAGENT_TIMEOUT_SEC: int = 600
 
 
 class PlanStage(BaseStage):

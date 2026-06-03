@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from shipcast.project import Project
 
 #: Wall-clock budget for the demo-script-writer sub-agent invocation.
-_SUBAGENT_TIMEOUT_SEC: int = 300
+_SUBAGENT_TIMEOUT_SEC: int = 600
 
 #: Inclusive beat-count bounds for a showcase storyboard.
 _MIN_BEATS: int = 4
