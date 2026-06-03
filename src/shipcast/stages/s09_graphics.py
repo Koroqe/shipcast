@@ -18,12 +18,11 @@ Slice scoping
 -------------
 This module ships the FULL ``run()`` shell that dispatches to
 ``_render_aspect_card`` / ``_render_og`` / ``_render_stat`` / ``_render_code`` /
-``_render_carousel_slide``. **Slice 16 implements only ``_render_aspect_card``**
-(and the shell wiring); ``_render_og`` / ``_render_stat`` / ``_render_code`` /
-``_render_carousel_slide`` are guarded stubs that raise
-:class:`NotImplementedError` and are NOT yet called by ``run()``. Slices 17-18
-fill those methods in and extend ``run()`` to call them. Keeping the method
-signatures here means the later slices only add bodies - no signature churn.
+``_render_carousel_slide``. Slice 16 landed ``_render_aspect_card`` + the shell;
+Slice 17 landed ``_render_og`` + ``_render_stat``; **Slice 18 landed
+``_render_code`` (conditional, Pygments + PIL) + ``_render_carousel_slide``
+(always, 6-slide LinkedIn carousel via the pure ``marketing.carousel``
+composer)**. All five renderers are now wired into ``run()``.
 
 Architecture
 ------------
@@ -265,6 +264,9 @@ class GraphicsStage(BaseStage):
 
         cost = 0.0
         outputs: list[Path] = []
+        #: Imagen-backed cards rendered (the cost-relevant count). The carousel
+        #: + code screenshot are pure-PIL and do NOT count here.
+        imagen_cards = 0
 
         for ratio, filename, dims in _ASPECT_CARDS:
             card_path = stage_dir / filename
@@ -279,6 +281,7 @@ class GraphicsStage(BaseStage):
                 out_path=card_path,
             )
             cost += IMAGEN_IMAGE_USD
+            imagen_cards += 1
             outputs.append(Path(self.id) / filename)
 
         # OG / social card (Slice 17) — ALWAYS rendered.
@@ -293,6 +296,7 @@ class GraphicsStage(BaseStage):
             out_path=stage_dir / og_filename,
         )
         cost += IMAGEN_IMAGE_USD
+        imagen_cards += 1
         outputs.append(Path(self.id) / og_filename)
 
         # Conditional stat card (Slice 17) — 4 ratios, ONLY when the brief flag
@@ -311,18 +315,44 @@ class GraphicsStage(BaseStage):
                     out_path=stage_dir / filename,
                 )
                 cost += IMAGEN_IMAGE_USD
+                imagen_cards += 1
                 outputs.append(Path(self.id) / filename)
 
-        # NOTE (Slice 18): conditional code screenshot and the 6-slide LinkedIn
-        # carousel are rendered here once ``_render_code`` /
-        # ``_render_carousel_slide`` are implemented. (referenced to keep the
-        # local meaningful for the later slice)
-        _ = brief.has_code_screenshot
+        # LinkedIn carousel (Slice 18) — ALWAYS rendered: exactly 6 slides
+        # (slide 01 = the LinkedIn hook, slides 02-05 = the four carousel beats,
+        # slide 06 = the first CTA). Pure PIL — no Imagen call.
+        carousel_dir = stage_dir / "carousel"
+        for idx, (kind, head, body) in enumerate(
+            self._carousel_slides(project, brief), start=1
+        ):
+            slide_rel = f"carousel/slide_{idx:02d}.png"
+            self._render_carousel_slide(
+                idx=idx,
+                kind=kind,
+                headline=head,
+                body=body,
+                palette=palette,
+                font_path=font_path,
+                out_path=carousel_dir / f"slide_{idx:02d}.png",
+            )
+            outputs.append(Path(self.id) / slide_rel)
+
+        # Conditional code screenshot (Slice 18) — ONLY when the brief flag is
+        # set. Rendered locally (Pygments + PIL) — no external API. The
+        # conditional output is declared so the dispatcher's outputs-hash + reset
+        # cover it.
+        if brief.has_code_screenshot:
+            self._render_code(
+                project=project,
+                palette=palette,
+                out_path=stage_dir / "code.png",
+            )
+            outputs.append(Path(self.id) / "code.png")
 
         return StageResult(
             status=StageStatus.DONE,
             outputs=tuple(outputs),
-            metrics={"cost_usd": round(cost, 4), "cards": len(outputs)},
+            metrics={"cost_usd": round(cost, 4), "cards": imagen_cards},
         )
 
     # ------------------------------------------------------------- aspect card
@@ -595,13 +625,122 @@ class GraphicsStage(BaseStage):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         background.save(out_path, format="PNG")
 
-    def _render_code(self, *args: Any, **kwargs: Any) -> None:
-        """Conditional code screenshot. Implemented in Slice 18."""
-        raise NotImplementedError("_render_code lands in Slice 18")
+    # ------------------------------------------------------- Slice 18 carousel
+    def _carousel_slides(
+        self, project: Project, brief: MarketingBrief
+    ) -> list[tuple[str, str, str]]:
+        """Return the six ``(kind, headline, body)`` carousel slide specs.
 
-    def _render_carousel_slide(self, *args: Any, **kwargs: Any) -> None:
-        """One LinkedIn carousel slide (1080x1350). Implemented in Slice 18."""
-        raise NotImplementedError("_render_carousel_slide lands in Slice 18")
+        Fixed mapping (CLAUDE.md): slide 01 = the LinkedIn hook (rendered from
+        the brief's ``hook_template_per_channel["linkedin"]`` over the picked
+        entry), slides 02-05 = the four ``carousel_beats``, slide 06 = the first
+        CTA. The 4-beat count is schema-enforced, so the result is always 6.
+        """
+        from shipcast.marketing import hooks
+
+        entry = self._entry_mapping(project)
+        hook_key = brief.hook_template_per_channel["linkedin"]
+        hook_text = hooks.render(hook_key, entry)
+        cta = next((c for c in brief.ctas if c.strip()), brief.ctas[0])
+
+        slides: list[tuple[str, str, str]] = [("hook", hook_text, "")]
+        for beat in brief.carousel_beats:
+            slides.append(("beat", beat.headline, beat.body))
+        slides.append(("cta", cta, ""))
+        return slides
+
+    def _entry_mapping(self, project: Project) -> dict[str, str]:
+        """``{name, summary, details}`` from ``01_pick/entry.json`` (best-effort)."""
+        path = project.path / _ENTRY_REL
+        if path.is_file():
+            entry = ChangelogEntry.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            return {
+                "name": entry.name,
+                "summary": entry.summary,
+                "details": entry.details,
+            }
+        return {"name": "", "summary": "", "details": ""}
+
+    def _render_carousel_slide(
+        self,
+        *,
+        idx: int,
+        kind: str,
+        headline: str,
+        body: str,
+        palette: tuple[str, str, str],
+        font_path: Path | None,
+        out_path: Path,
+    ) -> None:
+        """Render one LinkedIn carousel slide (1080x1350) -> ``out_path``.
+
+        Delegates to the pure :func:`shipcast.marketing.carousel.render_slide`
+        composer (no external API). Indirected through the module attribute so a
+        test can spy on the composer to assert slide 01 got the hook and slide 06
+        got the CTA (TC-12.8).
+        """
+        from shipcast.marketing import carousel
+
+        carousel.render_slide(
+            idx,
+            kind=kind,  # type: ignore[arg-type]
+            headline=headline,
+            body=body,
+            palette=palette,
+            font_path=font_path,
+            out_path=out_path,
+        )
+
+    # ------------------------------------------------------- Slice 18 code shot
+    def _render_code(
+        self,
+        *,
+        project: Project,
+        palette: tuple[str, str, str],
+        out_path: Path,
+    ) -> None:
+        """Render the conditional code screenshot -> ``out_path`` (Pygments+PIL).
+
+        The snippet is the FIRST fenced code block in the picked entry's
+        ``details``; when the entry carries no fenced block a small,
+        representative snippet is synthesized from the entry name so the card
+        still renders. Delegates to the pure
+        :func:`shipcast.marketing.code_screenshot.render_code` — no external API.
+        """
+        from shipcast.marketing import code_screenshot
+
+        entry = self._entry_mapping(project)
+        extracted = code_screenshot.extract_code_block(entry.get("details", ""))
+        if extracted is not None:
+            code, language = extracted
+        else:
+            code, language = self._synthesize_snippet(entry), "python"
+
+        code_screenshot.render_code(
+            code,
+            language=language,
+            palette=palette,
+            out_path=out_path,
+        )
+
+    @staticmethod
+    def _synthesize_snippet(entry: dict[str, str]) -> str:
+        """A tiny, deterministic placeholder snippet when no fenced block exists.
+
+        Built only from the picked entry's name so the same entry always yields
+        the same snippet (determinism); never includes secrets or live data.
+        """
+        name = (entry.get("name") or "feature").strip() or "feature"
+        slug = "".join(ch if ch.isalnum() else "_" for ch in name.lower()).strip(
+            "_"
+        ) or "feature"
+        return (
+            f"def {slug}() -> str:\n"
+            f'    """Ship: {name}."""\n'
+            f'    return "{name}"\n'
+        )
 
     # ------------------------------------------------------------- outputs
     def validate_outputs(self, project: Project, result: StageResult) -> None:

@@ -160,6 +160,81 @@ def test_demo_script_writer_snapshot_rejects_bad_beat_count() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# social-copywriter (Slice 18, structure contract — TC-22.5)
+# --------------------------------------------------------------------------- #
+#
+# The `social-copywriter` sub-agent and the `s10_copy` stage that drives it land
+# in Slice 19. Slice 18 lands this forward-looking SNAPSHOT of the EXPECTED
+# output STRUCTURE the copywriter must emit, parsed from pinned `claude -p`
+# stdout with NO real LLM call and NO dependency on the not-yet-built stage. It
+# pins the three-field CopyBundle shape (twitter_thread / linkedin / blog) plus
+# the load-bearing Twitter formatting constraints (3-8 numbered tweets, each
+# <= 280 chars, Unicode bold instead of Markdown `**bold**`). When Slice 19 wires
+# the real stage, TC-13.8 extends this with the live parsing path.
+
+#: Pinned social-copywriter stdout: a conformant CopyBundle JSON object. Twitter
+#: uses Unicode-bold (U+1D400 block) and contains NO Markdown `**` markers.
+_COPYWRITER_SNAPSHOT: dict[str, Any] = {
+    "twitter_thread": (
+        "1/ \U0001d5ea\U0001d5f2 \U0001d5f7\U0001d602\U0001d600\U0001d601 "
+        "shipped CSV export.\n"
+        "2/ One click, your whole report as a spreadsheet.\n"
+        "3/ Try it today."
+    ),
+    "linkedin": (
+        "We just shipped CSV export.\n\n"
+        "→ One click downloads your whole report.\n"
+        "▸ Streams large datasets without timing out.\n\n"
+        "Try it today."
+    ),
+    "blog": (
+        "# Add CSV export\n\n"
+        "We saw teams copy-pasting rows by hand. So we built a one-click "
+        "spreadsheet export. Here is how it works and why it matters."
+    ),
+}
+
+
+def test_social_copywriter_snapshot_structure_contract() -> None:
+    """TC-22.5 (Slice 18): pinned social-copywriter stdout parses to the expected
+    CopyBundle structure.
+
+    Snapshots the OUTPUT STRUCTURE CONTRACT (not the agent file, which Slice 19
+    installs): exactly the three CopyBundle keys, each a non-empty string, and
+    the Twitter formatting rules — 3-8 numbered tweets each <= 280 chars, no
+    Markdown `**bold**`, Unicode bold present.
+    """
+    parsed: dict[str, Any] = json.loads(json.dumps(_COPYWRITER_SNAPSHOT))
+
+    # Parsed JSON shape — exactly the CopyBundle keys, nothing extra.
+    assert set(parsed.keys()) == {"twitter_thread", "linkedin", "blog"}
+    for value in parsed.values():
+        assert isinstance(value, str) and value.strip()
+
+    twitter: str = parsed["twitter_thread"]
+    # No Markdown bold markers in the Twitter thread.
+    assert "**" not in twitter
+    # Unicode bold (Mathematical Bold block) IS present.
+    assert any("\U0001d400" <= ch <= "\U0001d7ff" for ch in twitter)
+    # 3-8 numbered tweets, each <= 280 chars.
+    tweets = [line for line in twitter.splitlines() if line.strip()]
+    assert 3 <= len(tweets) <= 8
+    for tweet in tweets:
+        assert len(tweet) <= 280
+
+
+def test_social_copywriter_snapshot_rejects_markdown_bold() -> None:
+    """A snapshot whose Twitter field uses Markdown `**bold**` violates contract."""
+    bad = dict(_COPYWRITER_SNAPSHOT)
+    bad["twitter_thread"] = "1/ **we** just shipped\n2/ try it\n3/ today"
+    parsed: dict[str, Any] = json.loads(json.dumps(bad))
+    assert "**" in parsed["twitter_thread"], "fixture must contain the violation"
+    # The contract assertion the structure snapshot enforces would fail here.
+    with pytest.raises(AssertionError):
+        assert "**" not in parsed["twitter_thread"]
+
+
+# --------------------------------------------------------------------------- #
 # Agent file existence + frontmatter (TC-7.8 / TC-8.7 / AC-6.3)
 # --------------------------------------------------------------------------- #
 

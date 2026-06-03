@@ -1,0 +1,22 @@
+{
+  "carousel_beats": [
+    { "body": "We saw the gap.", "headline": "Beat 0 headline" },
+    { "body": "We built it.", "headline": "Beat 1 headline" },
+    { "body": "We shipped it.", "headline": "Beat 2 headline" },
+    { "body": "Try it now.", "headline": "Beat 3 headline" }
+  ],
+  "ctas": ["Try it today"],
+  "has_code_screenshot": true,
+  "has_stat_card": false,
+  "hook_template_per_channel": {
+    "blog": "problem_aha",
+    "linkedin": "before_after",
+    "x": "we_just_shipped"
+  },
+  "video_beats": [
+    { "duration_sec": 4.0, "image_prompt": "beat 0", "narration": "line 0" },
+    { "duration_sec": 4.0, "image_prompt": "beat 1", "narration": "line 1" },
+    { "duration_sec": 4.0, "image_prompt": "beat 2", "narration": "line 2" },
+    { "duration_sec": 4.0, "image_prompt": "beat 3", "narration": "line 3" }
+  ]
+}

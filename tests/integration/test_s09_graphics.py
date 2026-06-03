@@ -207,11 +207,14 @@ def test_tc_12_2_aspect_card_dimensions(tmp_path: Path) -> None:
 
     out = proj.stage_dir("09_graphics")
     rels = {str(p) for p in result.outputs}
-    # The 4 aspect cards plus the always-on OG card (Slice 17). The default
-    # inline brief has has_stat_card=False, so no stat_* files.
-    assert rels == {
-        f"09_graphics/{name}" for name in _CARD_DIMS
-    } | {"09_graphics/og_card.png"}
+    # The 4 aspect cards, the always-on OG card (Slice 17), and the always-on
+    # 6-slide LinkedIn carousel (Slice 18). The default inline brief has
+    # has_stat_card=False and has_code_screenshot=False, so no stat_*/code files.
+    assert rels == (
+        {f"09_graphics/{name}" for name in _CARD_DIMS}
+        | {"09_graphics/og_card.png"}
+        | {f"09_graphics/carousel/slide_{i:02d}.png" for i in range(1, 7)}
+    )
 
     for name, dims in _CARD_DIMS.items():
         card = out / name
@@ -387,3 +390,96 @@ def test_tc_12_5_no_stat_files_when_flag_false(tmp_path: Path) -> None:
     assert "09_graphics/og_card.png" in rels
     # _render_stat was NOT called.
     assert stat_calls == []
+
+
+# --------------------------------------------------------------------------- #
+# Slice 18 — conditional code screenshot (Pygments + PIL, no external API)
+# --------------------------------------------------------------------------- #
+
+
+def _write_entry_with_code(proj: Project) -> None:
+    """Overwrite ``01_pick/entry.json`` with a fenced code block in ``details``."""
+    pick = proj.stage_dir("01_pick") / "entry.json"
+    pick.write_text(
+        dump_json_canonical(
+            {
+                "name": "Add CSV export",
+                "date": "2026-06-02",
+                "summary": "Spreadsheet export",
+                "details": (
+                    "We added a streaming export endpoint.\n\n"
+                    "```python\n"
+                    "def export(report_id: str) -> Iterator[str]:\n"
+                    "    for row in fetch(report_id):\n"
+                    "        yield to_csv(row)\n"
+                    "```\n"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_tc_12_6_code_png_rendered_when_flag_true(tmp_path: Path) -> None:
+    """TC-12.6: has_code_screenshot=true → openable code.png, no external API."""
+    from PIL import Image
+
+    proj = _build_project(tmp_path, brief_fixture="code_true.json")
+    _write_entry_with_code(proj)
+    gemini = _StubGemini()
+    result = _run(proj, gemini)
+    assert result.status == StageStatus.DONE
+
+    code = proj.stage_dir("09_graphics") / "code.png"
+    assert code.is_file(), "code.png missing when has_code_screenshot=true"
+    with Image.open(code) as img:
+        assert img.format == "PNG"
+        w, h = img.size
+        assert w >= 400 and h >= 120
+        # Real syntax-highlight content — not a flat fill.
+        colors = img.convert("RGB").getcolors(maxcolors=1 << 16)
+    assert colors is None or len(colors) > 8
+
+    rels = {str(p) for p in result.outputs}
+    assert "09_graphics/code.png" in rels
+    # The code screenshot is rendered locally — Imagen is only called for the 5
+    # cards (4 aspect + OG), never for the code screenshot.
+    assert gemini.calls == 5
+
+
+def test_tc_12_7_no_code_png_when_flag_false(tmp_path: Path) -> None:
+    """TC-12.7: has_code_screenshot=false → no code.png; _render_code not called."""
+    proj = _build_project(tmp_path, brief_fixture="code_false.json")
+
+    code_calls: list[Any] = []
+    orig_render_code = GraphicsStage._render_code
+
+    def _spy_render_code(self: GraphicsStage, *args: Any, **kwargs: Any) -> None:
+        code_calls.append((args, kwargs))
+        orig_render_code(self, *args, **kwargs)
+
+    stage = GraphicsStage(clients_factory=lambda _p: _Bundle(_StubGemini()))
+    stage._render_code = _spy_render_code.__get__(stage, GraphicsStage)  # type: ignore[method-assign]
+    result = stage.run(proj)
+    assert result.status == StageStatus.DONE
+
+    out = proj.stage_dir("09_graphics")
+    assert not (out / "code.png").exists()
+    rels = {str(p) for p in result.outputs}
+    assert "09_graphics/code.png" not in rels
+    assert code_calls == []
+
+
+def test_code_png_renders_without_fenced_block(tmp_path: Path) -> None:
+    """has_code_screenshot=true but no fenced block → synthesized snippet PNG."""
+    from PIL import Image
+
+    proj = _build_project(tmp_path, brief_fixture="code_true.json")
+    # The default entry (written by _build_project) has empty details, so the
+    # stage must synthesize a representative snippet rather than crash.
+    result = _run(proj, _StubGemini())
+    assert result.status == StageStatus.DONE
+    code = proj.stage_dir("09_graphics") / "code.png"
+    assert code.is_file()
+    with Image.open(code) as img:
+        assert img.format == "PNG"
