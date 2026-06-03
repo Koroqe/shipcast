@@ -294,17 +294,12 @@ def _install_subprocess_fake(monkeypatch: pytest.MonkeyPatch) -> None:
     real_run = subprocess.run
     brief_json = json.dumps(_valid_brief())
     storyboard_json = json.dumps(_valid_storyboard())
-    bundle_json = json.dumps(_valid_copy_bundle())
-
-    #: claude --agent <name> → canned stdout.
-    agent_stdout: dict[str, str] = {
-        "ba-analyst": '{"framing": "ok"}',
-        "planner": brief_json,
-        "brand-guardian": brief_json,
-        "demo-script-writer": storyboard_json,
-        "social-copywriter": bundle_json,
-        "code-reviewer": "LGTM — no broken links.",
-    }
+    cb = _valid_copy_bundle()
+    copy_markers = (
+        f"<<<TWITTER>>>\n{cb['twitter_thread']}\n"
+        f"<<<LINKEDIN>>>\n{cb['linkedin']}\n"
+        f"<<<BLOG>>>\n{cb['blog']}\n<<<END>>>\n"
+    )
 
     def _fake_run(cmd: list[str], *a: Any, **k: Any) -> Any:
         head = cmd[0]
@@ -312,9 +307,24 @@ def _install_subprocess_fake(monkeypatch: pytest.MonkeyPatch) -> None:
             # s02 repo signals — degrade gracefully (empty stdout).
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         if head == "claude":
-            agent = cmd[cmd.index("--agent") + 1]
-            stdout = agent_stdout.get(agent)
-            assert stdout is not None, f"unexpected claude agent: {agent!r}"
+            # brand-guardian is the only `--agent` call; the rest are plain
+            # `claude -p` dispatched by prompt content (the last argv item).
+            if "--agent" in cmd:
+                stdout = brief_json  # brand-guardian guards the brief
+            else:
+                prompt = cmd[-1]
+                if "marketing framing" in prompt:
+                    stdout = '{"framing": "ok"}'
+                elif "showcase storyboard" in prompt:
+                    stdout = storyboard_json
+                elif "marketing brief" in prompt:
+                    stdout = brief_json  # planner draft
+                elif "<<<TWITTER>>>" in prompt:
+                    stdout = copy_markers  # social-copywriter
+                elif "README" in prompt:
+                    stdout = "LGTM — no broken links."  # code-reviewer
+                else:  # pragma: no cover - guard against an unmapped prompt
+                    raise AssertionError(f"unmapped claude prompt: {prompt[:80]!r}")
             return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
         # ffmpeg / ffprobe stay REAL (testsrc clips are genuine 1080x1920 h264).
         return real_run(cmd, *a, **k)
