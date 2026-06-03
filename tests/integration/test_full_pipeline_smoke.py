@@ -208,7 +208,7 @@ def _valid_copy_bundle() -> dict[str, str]:
         + [f"{i}/ One idea per tweet, point {i}." for i in range(2, 5)]
     )
 
-    linkedin_words = ["value"] * (700 - len(hook.split()) - 12)
+    linkedin_words = ["value"] * (300 - len(hook.split()) - 12)
     linkedin = (
         f"{hook}\n\n"
         + " ".join(linkedin_words)

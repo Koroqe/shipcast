@@ -3,7 +3,7 @@
 Owned TCs (Section 13 + Section 20):
 - TC-13.1: happy path — `social-copywriter` `claude -p` mocked → three Markdown
            files with correct lengths (twitter 3-8 tweets each <= 280 chars,
-           linkedin 600-1200 words, blog 1200-2000 words).
+           linkedin 200-400 words, blog 1200-2000 words).
 - TC-13.2: each file opens with the brief's chosen hook template (first non-blank
            line CONTAINS `hooks.render(key, entry)`).
 - TC-13.3: twitter has no `**`, Unicode bold present.
@@ -102,7 +102,7 @@ def _twitter(*, n_tweets: int = 4, overlong: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _linkedin(*, n_words: int = 700) -> str:
+def _linkedin(*, n_words: int = 300) -> str:
     """A LinkedIn post opening with the rendered `linkedin` hook, n_words long."""
     hook = hooks.render(HOOK_LINKEDIN, _ENTRY_FOR_HOOK)
     body_words = ["value"] * max(0, n_words - len(hook.split()) - 12)
@@ -361,7 +361,7 @@ def test_tc_13_1_happy_path_three_files_correct_lengths(
     for tweet in tweets:
         assert len(tweet) <= 280
 
-    assert 600 <= len(linkedin.split()) <= 1200
+    assert 200 <= len(linkedin.split()) <= 400
     assert 1200 <= len(blog.split()) <= 2000
 
     m = Manifest.load(projects_root / SLUG / "manifest.json")
@@ -488,8 +488,8 @@ def test_tc_13_5_subagent_timeout_no_files(
     "bundle_kwargs",
     [
         {"blog": "word " * 100},  # blog only ~100 words
-        {"linkedin": "short " * 50},  # linkedin under 600 words
-        {"linkedin": "word " * 1500},  # linkedin over 1200 words
+        {"linkedin": "short " * 50},  # linkedin under 200 words
+        {"linkedin": "word " * 1500},  # linkedin over 400 words
         {"blog": "word " * 2500},  # blog over 2000 words
     ],
     ids=["blog_too_short", "linkedin_too_short", "linkedin_too_long", "blog_too_long"],

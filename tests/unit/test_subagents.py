@@ -168,7 +168,7 @@ def test_demo_script_writer_snapshot_rejects_bad_beat_count() -> None:
 # now drives the pinned `claude -p` stdout through the REAL CopyStage parsing path
 # (`_invoke_subagent`) and validates it against the REAL `CopyBundle` schema —
 # still with NO real LLM call. The pinned LinkedIn/blog bodies are padded to the
-# real 600-1200 / 1200-2000 word bounds the schema enforces.
+# real 200-400 / 1200-2000 word bounds the schema enforces.
 
 import shipcast.stages.s10_copy as copy_mod  # noqa: E402
 from shipcast.schemas import CopyBundle  # noqa: E402
@@ -197,7 +197,7 @@ _COPYWRITER_SNAPSHOT: dict[str, Any] = {
         "▸ Streams large datasets without timing out.\n\n"
         "What would you automate with it?\n\n"
         "#ship #build #devtools #csv",
-        700,
+        300,
     ),
     "blog": _pad_words(
         "# Add CSV export\n\n**TL;DR**\n- one\n- two\n- three\n\n"
@@ -240,7 +240,7 @@ def test_social_copywriter_snapshot_parses_to_copy_bundle() -> None:
     for tweet in tweets:
         assert len(tweet) <= 280
 
-    assert 600 <= len(bundle.linkedin.split()) <= 1200
+    assert 200 <= len(bundle.linkedin.split()) <= 400
     assert 1200 <= len(bundle.blog.split()) <= 2000
 
 

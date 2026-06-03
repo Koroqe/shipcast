@@ -649,14 +649,13 @@ TWITTER_MIN_TWEETS: int = 3
 TWITTER_MAX_TWEETS: int = 8
 TWITTER_MAX_TWEET_CHARS: int = 280
 
-#: LinkedIn long-form word-count bounds (inclusive). The floor was lowered from
-#: the original aspirational 600 to 400 after the real end-to-end run showed
-#: one-shot LinkedIn generation lands ~450-475 words (well-formed, hook-first,
-#: with bullets + CTA) and resists padding to 600 no matter how the prompt is
-#: phrased. 400 keeps the post substantial while matching what the model
-#: reliably produces; the blog floor (1200) is met and unchanged.
-LINKEDIN_MIN_WORDS: int = 400
-LINKEDIN_MAX_WORDS: int = 1200
+#: LinkedIn long-form word-count bounds (inclusive). Fixed (non-adaptive) short
+#: length: the post targets ~250-350 words — concise, hook-first, a few tight
+#: paragraphs with bullets + a closing question. The 200-400 validation window
+#: gives the one-shot model margin around the target while keeping the post
+#: short and skimmable; the blog floor (1200) is met and unchanged.
+LINKEDIN_MIN_WORDS: int = 200
+LINKEDIN_MAX_WORDS: int = 400
 
 #: Blog post word-count bounds (inclusive).
 BLOG_MIN_WORDS: int = 1200
@@ -695,9 +694,9 @@ class CopyBundle(BaseModel):
     * ``twitter_thread`` — 3-8 numbered tweets (one per non-blank line), each
       ≤ 280 characters; Unicode mathematical bold for emphasis, NEVER Markdown
       ``**bold**``.
-    * ``linkedin`` — 600-1200 words, hook-first, ``→``/``▸`` Unicode bullets
-      (not Markdown ``-``/``*`` list markers), closing question, ≤ 5 lowercase
-      hashtags.
+    * ``linkedin`` — 200-400 words (concise, ~250-350 target), hook-first,
+      ``→``/``▸`` Unicode bullets (not Markdown ``-``/``*`` list markers),
+      closing question, ≤ 5 lowercase hashtags.
     * ``blog`` — 1200-2000 words, TL;DR block, narrative arc, fenced code blocks.
 
     The per-channel HOOK-OPENING requirement (FR-12.4: each file opens with the

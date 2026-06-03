@@ -17,7 +17,7 @@ Channel-anatomy validation (HARD — before any write, TC-13.6)
 -------------------------------------------------------------
 ``run`` validates the parsed sub-agent JSON against :class:`CopyBundle` BEFORE
 writing anything: 3-8 numbered tweets each ≤ 280 chars (and no Markdown ``**``),
-LinkedIn 600-1200 words, blog 1200-2000 words. A violation raises
+LinkedIn 200-400 words, blog 1200-2000 words. A violation raises
 ``ValidationError`` -> the dispatcher records FAILED and NO partial ``.md`` files
 are left on disk. The per-channel HOOK-OPENING rule (each file's first non-blank
 line CONTAINS the brief's chosen hook for that channel, FR-12.4) needs the picked
@@ -111,8 +111,8 @@ class CopyStage(BaseStage):
     review_checklist_items: ClassVar[tuple[str, ...]] = (
         "Read the X thread: 3-8 numbered tweets, each ≤ 280 chars, Unicode bold "
         "not Markdown — and it opens with the chosen hook.",
-        "Read the LinkedIn post: 600-1200 words, hook-first, → / ▸ bullets, a "
-        "closing question, and ≤ 5 lowercase hashtags.",
+        "Read the LinkedIn post: 200-400 words (concise, ~250-350), hook-first, "
+        "→ / ▸ bullets, a closing question, and ≤ 5 lowercase hashtags.",
         "Read the blog: 1200-2000 words, a TL;DR block, narrative arc, fenced "
         "code where relevant — and it opens with the chosen hook.",
         "Confirm every claim is grounded in the changelog entry — no invented "
@@ -238,10 +238,10 @@ class CopyStage(BaseStage):
             "- X thread: 3-8 numbered tweets, one per line ('1/ ...'), each line "
             "<= 280 chars; Unicode mathematical bold for emphasis, NEVER Markdown "
             "'**bold**'.\n"
-            "- LinkedIn: a COMPLETE post — TARGET about 900 words, and NEVER "
-            "fewer than 600 (count them); hook-first; 6-8 substantive paragraphs "
-            "with concrete detail and examples; '->'/'>' Unicode bullets (no "
-            "Markdown '-'/'*'); a closing question; 3-5 lowercase hashtags.\n"
+            "- LinkedIn: a CONCISE post — TARGET about 250-350 words, NEVER "
+            "fewer than 200 and NEVER more than 400 (count them); hook-first; a "
+            "few tight paragraphs; '->'/'>' Unicode bullets (no Markdown "
+            "'-'/'*'); a closing question; 3-5 lowercase hashtags.\n"
             "- blog: a COMPLETE article — TARGET about 1600 words, and NEVER "
             "fewer than 1200 (count them); opens with the hook then a TL;DR "
             "block; a full narrative arc (problem -> constraint -> exploration "
