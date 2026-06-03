@@ -90,6 +90,19 @@ _ASPECT_CARDS: tuple[tuple[str, str, tuple[int, int]], ...] = (
     ("4:5", "4x5.png", (1080, 1350)),
 )
 
+#: The OG / social card: a single 1200x630 graphic (the ``og`` Imagen aspect).
+_OG_CARD: tuple[str, str, tuple[int, int]] = ("og", "og_card.png", (1200, 630))
+
+#: The conditional stat card, rendered at the SAME four aspect ratios as the
+#: aspect cards but with the ``stat_`` filename prefix (TC-12.4). Only produced
+#: when ``brief.has_stat_card`` is true.
+_STAT_CARDS: tuple[tuple[str, str, tuple[int, int]], ...] = (
+    ("1:1", "stat_1x1.png", (1080, 1080)),
+    ("16:9", "stat_16x9.png", (1920, 1080)),
+    ("9:16", "stat_9x16.png", (1080, 1920)),
+    ("4:5", "stat_4x5.png", (1080, 1350)),
+)
+
 
 # --------------------------------------------------------------------------- #
 # Clients bundle Protocol (structural; mocked in tests)
@@ -233,11 +246,12 @@ class GraphicsStage(BaseStage):
     def run(self, project: Project) -> StageResult:
         """Render the full graphics package.
 
-        Slice 16 renders the 4 aspect cards. Slices 17-18 extend this shell to
-        call ``_render_og`` / ``_render_stat`` / ``_render_code`` /
-        ``_render_carousel_slide`` (the conditional ones gated on the brief
-        flags). Until then those branches are intentionally absent so Slice 16
-        produces exactly the 4 aspect cards.
+        Renders the 4 aspect cards (Slice 16) and the always-on OG card plus the
+        conditional stat card (Slice 17, gated on ``brief.has_stat_card``).
+        Slice 18 extends this shell to call ``_render_code`` /
+        ``_render_carousel_slide`` (gated on ``brief.has_code_screenshot``).
+        Conditional outputs are declared in the returned ``StageResult`` so the
+        dispatcher's outputs-hash + reset cover them.
         """
         clients = self._clients_factory(project)
         brief = self._load_brief(project)
@@ -267,13 +281,43 @@ class GraphicsStage(BaseStage):
             cost += IMAGEN_IMAGE_USD
             outputs.append(Path(self.id) / filename)
 
-        # NOTE (Slices 17-18): OG card, conditional stat card, conditional code
-        # screenshot, and the 6-slide LinkedIn carousel are rendered here once
-        # ``_render_og`` / ``_render_stat`` / ``_render_code`` /
-        # ``_render_carousel_slide`` are implemented. ``brief`` is loaded now so
-        # the flag-gated branches read straight off it. (referenced to keep the
-        # local meaningful for the later slices)
-        _ = brief.has_stat_card, brief.has_code_screenshot
+        # OG / social card (Slice 17) — ALWAYS rendered.
+        _og_ratio, og_filename, og_dims = _OG_CARD
+        self._render_og(
+            clients=clients,
+            dims=og_dims,
+            headline=headline,
+            palette=palette,
+            font_path=font_path,
+            image_model=image_model,
+            out_path=stage_dir / og_filename,
+        )
+        cost += IMAGEN_IMAGE_USD
+        outputs.append(Path(self.id) / og_filename)
+
+        # Conditional stat card (Slice 17) — 4 ratios, ONLY when the brief flag
+        # is set. The conditional outputs are declared in the StageResult so the
+        # dispatcher's outputs-hash + reset cover them.
+        if brief.has_stat_card:
+            for ratio, filename, dims in _STAT_CARDS:
+                self._render_stat(
+                    clients=clients,
+                    ratio=ratio,  # type: ignore[arg-type]
+                    dims=dims,
+                    headline=headline,
+                    palette=palette,
+                    font_path=font_path,
+                    image_model=image_model,
+                    out_path=stage_dir / filename,
+                )
+                cost += IMAGEN_IMAGE_USD
+                outputs.append(Path(self.id) / filename)
+
+        # NOTE (Slice 18): conditional code screenshot and the 6-slide LinkedIn
+        # carousel are rendered here once ``_render_code`` /
+        # ``_render_carousel_slide`` are implemented. (referenced to keep the
+        # local meaningful for the later slice)
+        _ = brief.has_code_screenshot
 
         return StageResult(
             status=StageStatus.DONE,
@@ -299,26 +343,42 @@ class GraphicsStage(BaseStage):
         Gemini Imagen generates the background at ``ratio``; the bytes are
         normalised to the canonical ``dims`` (RGB), then the entry ``headline``
         is overlaid with the brand display font via ``draw_outlined`` on the
-        8-point grid (>= 8 % padding).
+        8-point grid (>= 8 % padding). Delegates to the shared
+        :meth:`_render_imagen_card` body.
         """
-        from io import BytesIO
+        self._render_imagen_card(
+            clients=clients,
+            ratio=ratio,
+            dims=dims,
+            headline=headline,
+            palette=palette,
+            font_path=font_path,
+            image_model=image_model,
+            out_path=out_path,
+        )
 
-        from PIL import Image, ImageDraw
+    @staticmethod
+    def _overlay_headline(
+        background: Any,
+        *,
+        headline: str,
+        palette: tuple[str, str, str],
+        font_path: Path | None,
+    ) -> None:
+        """Draw the wrapped, centred, outlined ``headline`` onto ``background``.
+
+        Shared by ``_render_aspect_card`` / ``_render_og`` / ``_render_stat`` so
+        all three cards lay text out identically: brand display font, headline
+        sized to the frame's shorter side, snapped to the 8-point grid, wrapped
+        inside the >= 8 % padded safe area, and vertically centred. The text is
+        ``neutral`` with a ``primary`` stroke so it reads on any background.
+        """
+        from PIL import ImageDraw
 
         from shipcast.composition import layout
         from shipcast.composition.captions import _load_font
 
-        prompt = self._background_prompt(headline, palette, ratio)
-        raw = self._generate_still_with_retry(clients, prompt, ratio, image_model)
-
-        width, height = dims
-        with Image.open(BytesIO(raw)) as src:
-            background = src.convert("RGB")
-            if background.size != dims:
-                background = background.resize(dims)
-            else:
-                background = background.copy()
-
+        width, height = background.size
         draw = ImageDraw.ImageDraw(background)
 
         pad = layout.min_padding(width, height)
@@ -329,7 +389,9 @@ class GraphicsStage(BaseStage):
 
         primary, _accent, neutral = palette
         # Wrap the headline so it fits inside the padded safe width.
-        lines = self._wrap_headline(headline, font, draw, max_width=width - 2 * pad)
+        lines = GraphicsStage._wrap_headline(
+            headline, font, draw, max_width=width - 2 * pad
+        )
         line_height = layout.snap_to_grid(font_size * 1.25)
         block_height = line_height * len(lines)
         # Vertically center the headline block within the safe area.
@@ -346,9 +408,6 @@ class GraphicsStage(BaseStage):
                 stroke_fill=primary,
                 anchor="mt",
             )
-
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        background.save(out_path, format="PNG")
 
     @staticmethod
     def _background_prompt(
@@ -436,13 +495,105 @@ class GraphicsStage(BaseStage):
     # land in Slices 17 (OG + stat) and 18 (code + carousel); until then they
     # are NotImplementedError-guarded and are NOT called by ``run()``.
 
-    def _render_og(self, *args: Any, **kwargs: Any) -> None:
-        """OG card (1200x630). Implemented in Slice 17."""
-        raise NotImplementedError("_render_og lands in Slice 17")
+    def _render_og(
+        self,
+        *,
+        clients: _ClientsBundle,
+        dims: tuple[int, int],
+        headline: str,
+        palette: tuple[str, str, str],
+        font_path: Path | None,
+        image_model: str,
+        out_path: Path,
+    ) -> None:
+        """Render the OG / social card (1200x630) -> ``out_path``.
 
-    def _render_stat(self, *args: Any, **kwargs: Any) -> None:
-        """Conditional stat card. Implemented in Slice 17."""
-        raise NotImplementedError("_render_stat lands in Slice 17")
+        Gemini Imagen generates the background at the ``og`` aspect (1200x630);
+        the bytes are normalised to ``dims`` (RGB), then the entry ``headline``
+        is overlaid with the brand display font via the shared
+        :meth:`_overlay_headline` (same 8-point-grid / >= 8 % padding rules as
+        the aspect cards). This is the card that fronts a shared link.
+        """
+        self._render_imagen_card(
+            clients=clients,
+            ratio="og",
+            dims=dims,
+            headline=headline,
+            palette=palette,
+            font_path=font_path,
+            image_model=image_model,
+            out_path=out_path,
+        )
+
+    def _render_stat(
+        self,
+        *,
+        clients: _ClientsBundle,
+        ratio: AspectRatio,
+        dims: tuple[int, int],
+        headline: str,
+        palette: tuple[str, str, str],
+        font_path: Path | None,
+        image_model: str,
+        out_path: Path,
+    ) -> None:
+        """Render one conditional stat card at ``ratio`` -> ``out_path``.
+
+        Called once per aspect ratio ONLY when ``brief.has_stat_card`` is true
+        (the dispatcher gates the cost; ``run()`` gates the call). The render
+        path mirrors the aspect card: an on-brand Imagen background normalised
+        to ``dims`` with the headline overlaid via :meth:`_overlay_headline`.
+        """
+        self._render_imagen_card(
+            clients=clients,
+            ratio=ratio,
+            dims=dims,
+            headline=headline,
+            palette=palette,
+            font_path=font_path,
+            image_model=image_model,
+            out_path=out_path,
+        )
+
+    def _render_imagen_card(
+        self,
+        *,
+        clients: _ClientsBundle,
+        ratio: AspectRatio,
+        dims: tuple[int, int],
+        headline: str,
+        palette: tuple[str, str, str],
+        font_path: Path | None,
+        image_model: str,
+        out_path: Path,
+    ) -> None:
+        """Imagen background (at ``ratio``) + headline overlay -> ``out_path``.
+
+        The shared body behind :meth:`_render_aspect_card` / :meth:`_render_og` /
+        :meth:`_render_stat`: generate the still with the bounded transient retry,
+        normalise to the canonical ``dims`` (RGB), overlay the headline, and save
+        as PNG.
+        """
+        from io import BytesIO
+
+        from PIL import Image
+
+        prompt = self._background_prompt(headline, palette, ratio)
+        raw = self._generate_still_with_retry(clients, prompt, ratio, image_model)
+
+        with Image.open(BytesIO(raw)) as src:
+            background = src.convert("RGB")
+            if background.size != dims:
+                background = background.resize(dims)
+            else:
+                background = background.copy()
+
+        self._overlay_headline(
+            background, headline=headline, palette=palette, font_path=font_path
+        )
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        background.save(out_path, format="PNG")
 
     def _render_code(self, *args: Any, **kwargs: Any) -> None:
         """Conditional code screenshot. Implemented in Slice 18."""

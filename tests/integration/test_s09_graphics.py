@@ -119,7 +119,12 @@ class _Bundle:
 # --------------------------------------------------------------------------- #
 
 
-def _build_project(tmp_path: Path) -> Project:
+#: Pinned brief fixtures (NOT live LLM output) — drive deterministic
+#: stat-card conditionality (Slice 17).
+_BRIEFS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "briefs"
+
+
+def _build_project(tmp_path: Path, *, brief_fixture: str | None = None) -> Project:
     root = tmp_path / "projects"
     root.mkdir()
     proj = Project.create(
@@ -154,12 +159,15 @@ def _build_project(tmp_path: Path) -> Project:
     )
     (brand_dir / "voice.md").write_text("caption_mode: chip\n", encoding="utf-8")
 
-    # 04_plan/brief.json — pinned brief.
+    # 04_plan/brief.json — pinned brief. A named fixture (NOT live LLM output)
+    # overrides the inline default so stat-card conditionality is deterministic.
     plan_dir = proj.stage_dir("04_plan")
     plan_dir.mkdir(parents=True, exist_ok=True)
-    (plan_dir / "brief.json").write_text(
-        dump_json_canonical(_pinned_brief()), encoding="utf-8"
-    )
+    if brief_fixture is not None:
+        brief_text = (_BRIEFS_DIR / brief_fixture).read_text(encoding="utf-8")
+    else:
+        brief_text = dump_json_canonical(_pinned_brief())
+    (plan_dir / "brief.json").write_text(brief_text, encoding="utf-8")
 
     # Brand pack fonts dir (no real .ttf — exercises the system-font fallback).
     fonts = root / "_brand" / "test-brand" / "fonts"
@@ -199,7 +207,11 @@ def test_tc_12_2_aspect_card_dimensions(tmp_path: Path) -> None:
 
     out = proj.stage_dir("09_graphics")
     rels = {str(p) for p in result.outputs}
-    assert rels == {f"09_graphics/{name}" for name in _CARD_DIMS}
+    # The 4 aspect cards plus the always-on OG card (Slice 17). The default
+    # inline brief has has_stat_card=False, so no stat_* files.
+    assert rels == {
+        f"09_graphics/{name}" for name in _CARD_DIMS
+    } | {"09_graphics/og_card.png"}
 
     for name, dims in _CARD_DIMS.items():
         card = out / name
@@ -207,9 +219,9 @@ def test_tc_12_2_aspect_card_dimensions(tmp_path: Path) -> None:
         with Image.open(card) as img:
             assert img.size == dims, f"{name} is {img.size}, expected {dims}"
 
-    # One Imagen call per card, each at the matching ratio.
-    assert gemini.calls == 4
-    assert gemini.ratios_seen == ["1:1", "16:9", "9:16", "4:5"]
+    # One Imagen call per aspect card plus one for the OG card.
+    assert gemini.calls == 5
+    assert gemini.ratios_seen == ["1:1", "16:9", "9:16", "4:5", "og"]
 
 
 # --------------------------------------------------------------------------- #
@@ -244,12 +256,12 @@ def test_tc_12_10_rate_limited_second_call_fails(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_metrics_record_four_imagen_calls(tmp_path: Path) -> None:
+def test_metrics_record_imagen_calls(tmp_path: Path) -> None:
     proj = _build_project(tmp_path)
     result = _run(proj, _StubGemini())
-    # 4 Imagen stills @ $0.04 = $0.16.
-    assert result.metrics["cost_usd"] == pytest.approx(0.16)
-    assert result.metrics["cards"] == 4
+    # 4 aspect cards + 1 OG card = 5 Imagen stills @ $0.04 = $0.20.
+    assert result.metrics["cost_usd"] == pytest.approx(0.20)
+    assert result.metrics["cards"] == 5
 
 
 def test_next_call_cost_is_one_imagen(tmp_path: Path) -> None:
@@ -269,3 +281,109 @@ def test_validate_outputs_accepts_cards(tmp_path: Path) -> None:
     result = _run(proj, gemini)
     stage = GraphicsStage()
     stage.validate_outputs(proj, result)  # must not raise
+
+
+# --------------------------------------------------------------------------- #
+# Slice 17 — OG card (always) + conditional stat card
+# --------------------------------------------------------------------------- #
+
+_STAT_DIMS = {
+    "stat_1x1.png": (1080, 1080),
+    "stat_16x9.png": (1920, 1080),
+    "stat_9x16.png": (1080, 1920),
+    "stat_4x5.png": (1080, 1350),
+}
+
+
+# --------------------------------------------------------------------------- #
+# TC-12.2 (partial) / AC-3.7 — the OG card opens at exactly 1200x630
+# --------------------------------------------------------------------------- #
+
+
+def test_tc_12_2_og_card_dimensions(tmp_path: Path) -> None:
+    from PIL import Image
+
+    proj = _build_project(tmp_path)
+    result = _run(proj, _StubGemini())
+    assert result.status == StageStatus.DONE
+
+    og = proj.stage_dir("09_graphics") / "og_card.png"
+    assert og.is_file(), "og_card.png missing"
+    with Image.open(og) as img:
+        assert img.size == (1200, 630), f"og_card.png is {img.size}"
+
+    rels = {str(p) for p in result.outputs}
+    assert "09_graphics/og_card.png" in rels
+
+
+def test_og_card_palette_conformance(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path)
+    _run(proj, _StubGemini())
+    og = proj.stage_dir("09_graphics") / "og_card.png"
+    assert_palette_conformance(og, _PALETTE)
+
+
+# --------------------------------------------------------------------------- #
+# TC-12.4 — stat card rendered (4 ratios) when has_stat_card=true
+# --------------------------------------------------------------------------- #
+
+
+def test_tc_12_4_stat_cards_rendered_when_flag_true(tmp_path: Path) -> None:
+    from PIL import Image
+
+    proj = _build_project(tmp_path, brief_fixture="stat_true.json")
+    result = _run(proj, _StubGemini())
+    assert result.status == StageStatus.DONE
+
+    out = proj.stage_dir("09_graphics")
+    rels = {str(p) for p in result.outputs}
+
+    for name, dims in _STAT_DIMS.items():
+        card = out / name
+        assert card.is_file(), f"{name} missing"
+        with Image.open(card) as img:
+            assert img.size == dims, f"{name} is {img.size}, expected {dims}"
+        # Declared in the stage result so outputs-hash + reset cover them.
+        assert f"09_graphics/{name}" in rels
+
+
+def test_tc_12_4_stat_cards_palette_conformance(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path, brief_fixture="stat_true.json")
+    _run(proj, _StubGemini())
+    out = proj.stage_dir("09_graphics")
+    for name in _STAT_DIMS:
+        assert_palette_conformance(out / name, _PALETTE)
+
+
+# --------------------------------------------------------------------------- #
+# TC-12.5 — NO stat files when has_stat_card=false; _render_stat not called
+# --------------------------------------------------------------------------- #
+
+
+def test_tc_12_5_no_stat_files_when_flag_false(tmp_path: Path) -> None:
+    proj = _build_project(tmp_path, brief_fixture="stat_false.json")
+
+    # Spy on _render_stat so we can assert it is never invoked.
+    stat_calls: list[Any] = []
+    orig_render_stat = GraphicsStage._render_stat
+
+    def _spy_render_stat(self: GraphicsStage, *args: Any, **kwargs: Any) -> None:
+        stat_calls.append((args, kwargs))
+        orig_render_stat(self, *args, **kwargs)
+
+    stage = GraphicsStage(clients_factory=lambda _p: _Bundle(_StubGemini()))
+    stage._render_stat = _spy_render_stat.__get__(stage, GraphicsStage)  # type: ignore[method-assign]
+    result = stage.run(proj)
+    assert result.status == StageStatus.DONE
+
+    out = proj.stage_dir("09_graphics")
+    # No stat_* files on disk.
+    assert sorted(p.name for p in out.glob("stat_*.png")) == []
+    # No stat_* paths declared in the result outputs.
+    rels = {str(p) for p in result.outputs}
+    assert not any(r.startswith("09_graphics/stat_") for r in rels)
+    # OG card still present.
+    assert (out / "og_card.png").is_file()
+    assert "09_graphics/og_card.png" in rels
+    # _render_stat was NOT called.
+    assert stat_calls == []
