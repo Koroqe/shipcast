@@ -65,11 +65,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    # Slice 1 quarantine: ``shipcast.schemas`` lands in Slice 3. The annotation
-    # below is only needed for type-checking; the runtime construction lazy-
-    # imports ``WordTimestamp`` inside ``transcribe_with_alignment`` so this
-    # module import-parses without ``shipcast.schemas`` existing yet.
-    from shipcast.schemas import WordTimestamp  # type: ignore[import-untyped]
+    # ``shipcast.schemas`` (Slice 3) now defines ``WordTimestamp`` for real.
+    # The annotation below is only needed for type-checking; the runtime
+    # construction lazy-imports ``WordTimestamp`` inside
+    # ``transcribe_with_alignment`` to keep this client free of an eager
+    # schemas import at module load.
+    from shipcast.schemas import WordTimestamp
 
 
 class WhisperXClient:
