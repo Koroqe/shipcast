@@ -641,6 +641,123 @@ class MarketingBrief(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# CopyBundle (s10_copy artifact — the three text channels)
+# --------------------------------------------------------------------------- #
+
+#: Twitter thread bounds (inclusive): number of numbered tweets, per-tweet chars.
+TWITTER_MIN_TWEETS: int = 3
+TWITTER_MAX_TWEETS: int = 8
+TWITTER_MAX_TWEET_CHARS: int = 280
+
+#: LinkedIn long-form word-count bounds (inclusive).
+LINKEDIN_MIN_WORDS: int = 600
+LINKEDIN_MAX_WORDS: int = 1200
+
+#: Blog post word-count bounds (inclusive).
+BLOG_MIN_WORDS: int = 1200
+BLOG_MAX_WORDS: int = 2000
+
+
+def count_tweets(twitter_thread: str) -> list[str]:
+    """Split a Twitter-thread string into its numbered tweets.
+
+    Tweets are the non-blank lines of the thread (the copywriter emits one
+    ``N/ ...`` numbered tweet per line). Blank lines separate nothing here; we
+    simply drop whitespace-only lines. Returned in order.
+    """
+    return [line for line in twitter_thread.splitlines() if line.strip()]
+
+
+def count_words(text: str) -> int:
+    """Whitespace word count — the metric the LinkedIn/blog bounds are measured in."""
+    return len(text.split())
+
+
+class CopyBundle(BaseModel):
+    """The three text artifacts ``s10_copy`` writes (X thread / LinkedIn / blog).
+
+    Produced by the ``social-copywriter`` sub-agent (a single ``claude -p`` call)
+    as a JSON object with three string fields; ``s10_copy`` validates the HARD
+    channel-anatomy length/structure constraints against this model BEFORE
+    writing the three ``.md`` files, so a violating bundle fails the stage
+    cleanly and leaves no partial artifacts on disk (TC-13.6). The default
+    ``validate_outputs`` cannot re-run these checks (the on-disk artifacts are
+    raw ``.md`` files, not this JSON), so ``s10_copy.validate_outputs`` re-reads
+    the three files and re-asserts the same bounds as defense-in-depth.
+
+    Channel anatomy (PRD §14, FR-12.3 / FR-12.5):
+
+    * ``twitter_thread`` — 3-8 numbered tweets (one per non-blank line), each
+      ≤ 280 characters; Unicode mathematical bold for emphasis, NEVER Markdown
+      ``**bold**``.
+    * ``linkedin`` — 600-1200 words, hook-first, ``→``/``▸`` Unicode bullets
+      (not Markdown ``-``/``*`` list markers), closing question, ≤ 5 lowercase
+      hashtags.
+    * ``blog`` — 1200-2000 words, TL;DR block, narrative arc, fenced code blocks.
+
+    The per-channel HOOK-OPENING requirement (FR-12.4: each file opens with the
+    brief's chosen hook template) is NOT encoded here — it needs the picked entry
+    + the brief, which only the stage has — so ``s10_copy.run`` enforces it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    twitter_thread: str
+    linkedin: str
+    blog: str
+
+    @field_validator("twitter_thread")
+    @classmethod
+    def _twitter_anatomy(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("twitter_thread must be a non-empty string")
+        if "**" in v:
+            raise ValueError(
+                "twitter_thread must not use Markdown '**bold**' — use Unicode "
+                "mathematical bold instead (FR-12.5)"
+            )
+        tweets = count_tweets(v)
+        if not (TWITTER_MIN_TWEETS <= len(tweets) <= TWITTER_MAX_TWEETS):
+            raise ValueError(
+                f"twitter_thread must contain {TWITTER_MIN_TWEETS}-"
+                f"{TWITTER_MAX_TWEETS} numbered tweets, got {len(tweets)}"
+            )
+        for i, tweet in enumerate(tweets):
+            if len(tweet) > TWITTER_MAX_TWEET_CHARS:
+                raise ValueError(
+                    f"twitter_thread tweet {i + 1} exceeds "
+                    f"{TWITTER_MAX_TWEET_CHARS} characters ({len(tweet)})"
+                )
+        return v
+
+    @field_validator("linkedin")
+    @classmethod
+    def _linkedin_word_count(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("linkedin must be a non-empty string")
+        words = count_words(v)
+        if not (LINKEDIN_MIN_WORDS <= words <= LINKEDIN_MAX_WORDS):
+            raise ValueError(
+                f"linkedin word count must be {LINKEDIN_MIN_WORDS}-"
+                f"{LINKEDIN_MAX_WORDS}, got {words}"
+            )
+        return v
+
+    @field_validator("blog")
+    @classmethod
+    def _blog_word_count(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("blog must be a non-empty string")
+        words = count_words(v)
+        if not (BLOG_MIN_WORDS <= words <= BLOG_MAX_WORDS):
+            raise ValueError(
+                f"blog word count must be {BLOG_MIN_WORDS}-{BLOG_MAX_WORDS}, "
+                f"got {words}"
+            )
+        return v
+
+
+# --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 

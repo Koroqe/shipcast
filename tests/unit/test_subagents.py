@@ -160,78 +160,110 @@ def test_demo_script_writer_snapshot_rejects_bad_beat_count() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# social-copywriter (Slice 18, structure contract — TC-22.5)
+# social-copywriter (Slice 19, TC-13.8 / TC-22.5)
 # --------------------------------------------------------------------------- #
 #
-# The `social-copywriter` sub-agent and the `s10_copy` stage that drives it land
-# in Slice 19. Slice 18 lands this forward-looking SNAPSHOT of the EXPECTED
-# output STRUCTURE the copywriter must emit, parsed from pinned `claude -p`
-# stdout with NO real LLM call and NO dependency on the not-yet-built stage. It
-# pins the three-field CopyBundle shape (twitter_thread / linkedin / blog) plus
-# the load-bearing Twitter formatting constraints (3-8 numbered tweets, each
-# <= 280 chars, Unicode bold instead of Markdown `**bold**`). When Slice 19 wires
-# the real stage, TC-13.8 extends this with the live parsing path.
+# Slice 18 landed a forward-looking structure contract for the `social-copywriter`
+# output. Slice 19 wires the real `s10_copy` stage + agent file, so this section
+# now drives the pinned `claude -p` stdout through the REAL CopyStage parsing path
+# (`_invoke_subagent`) and validates it against the REAL `CopyBundle` schema —
+# still with NO real LLM call. The pinned LinkedIn/blog bodies are padded to the
+# real 600-1200 / 1200-2000 word bounds the schema enforces.
 
-#: Pinned social-copywriter stdout: a conformant CopyBundle JSON object. Twitter
-#: uses Unicode-bold (U+1D400 block) and contains NO Markdown `**` markers.
+import shipcast.stages.s10_copy as copy_mod  # noqa: E402
+from shipcast.schemas import CopyBundle  # noqa: E402
+
+# Unicode mathematical bold "just" (U+1D400 block), for the no-`**` assertion.
+_UNI_BOLD = "\U0001d5f7\U0001d602\U0001d600\U0001d601"
+
+
+def _pad_words(prefix: str, n_words: int) -> str:
+    """Return `prefix` followed by enough filler words to reach `n_words` total."""
+    have = len(prefix.split())
+    return prefix + " " + " ".join(["value"] * max(0, n_words - have))
+
+
+#: Pinned social-copywriter stdout: a conformant CopyBundle JSON object meeting
+#: the REAL schema bounds. Twitter uses Unicode-bold (U+1D400 block), no `**`.
 _COPYWRITER_SNAPSHOT: dict[str, Any] = {
     "twitter_thread": (
-        "1/ \U0001d5ea\U0001d5f2 \U0001d5f7\U0001d602\U0001d600\U0001d601 "
-        "shipped CSV export.\n"
+        f"1/ We {_UNI_BOLD} shipped CSV export.\n"
         "2/ One click, your whole report as a spreadsheet.\n"
-        "3/ Try it today."
+        "3/ Try it today. If this helped, RT the first tweet."
     ),
-    "linkedin": (
+    "linkedin": _pad_words(
         "We just shipped CSV export.\n\n"
         "→ One click downloads your whole report.\n"
         "▸ Streams large datasets without timing out.\n\n"
-        "Try it today."
+        "What would you automate with it?\n\n"
+        "#ship #build #devtools #csv",
+        700,
     ),
-    "blog": (
-        "# Add CSV export\n\n"
-        "We saw teams copy-pasting rows by hand. So we built a one-click "
-        "spreadsheet export. Here is how it works and why it matters."
+    "blog": _pad_words(
+        "# Add CSV export\n\n**TL;DR**\n- one\n- two\n- three\n\n"
+        "We saw teams copy-pasting rows by hand, so we built a one-click "
+        "spreadsheet export. Try it. Feedback welcome. — the team",
+        1300,
     ),
 }
 
 
-def test_social_copywriter_snapshot_structure_contract() -> None:
-    """TC-22.5 (Slice 18): pinned social-copywriter stdout parses to the expected
-    CopyBundle structure.
+def test_social_copywriter_snapshot_parses_to_copy_bundle() -> None:
+    """TC-13.8 / TC-22.5: pinned copywriter stdout parses to a valid CopyBundle.
 
-    Snapshots the OUTPUT STRUCTURE CONTRACT (not the agent file, which Slice 19
-    installs): exactly the three CopyBundle keys, each a non-empty string, and
-    the Twitter formatting rules — 3-8 numbered tweets each <= 280 chars, no
-    Markdown `**bold**`, Unicode bold present.
+    Drives the pinned stdout through the REAL `CopyStage._invoke_subagent` parsing
+    path, then validates against the REAL `CopyBundle` schema: exactly the three
+    keys, each non-empty, 3-8 numbered tweets each <= 280 chars, no `**`, Unicode
+    bold present, LinkedIn/blog within the word bounds.
     """
-    parsed: dict[str, Any] = json.loads(json.dumps(_COPYWRITER_SNAPSHOT))
+    stage = copy_mod.CopyStage(
+        subprocess_run=_stub_run(json.dumps(_COPYWRITER_SNAPSHOT))
+    )
+
+    parsed = stage._invoke_subagent("social-copywriter", "write the copy")
 
     # Parsed JSON shape — exactly the CopyBundle keys, nothing extra.
     assert set(parsed.keys()) == {"twitter_thread", "linkedin", "blog"}
-    for value in parsed.values():
-        assert isinstance(value, str) and value.strip()
 
-    twitter: str = parsed["twitter_thread"]
-    # No Markdown bold markers in the Twitter thread.
+    bundle = CopyBundle.model_validate(parsed)
+    assert bundle.twitter_thread and bundle.linkedin and bundle.blog
+
+    twitter = bundle.twitter_thread
     assert "**" not in twitter
-    # Unicode bold (Mathematical Bold block) IS present.
     assert any("\U0001d400" <= ch <= "\U0001d7ff" for ch in twitter)
-    # 3-8 numbered tweets, each <= 280 chars.
     tweets = [line for line in twitter.splitlines() if line.strip()]
     assert 3 <= len(tweets) <= 8
     for tweet in tweets:
         assert len(tweet) <= 280
 
+    assert 600 <= len(bundle.linkedin.split()) <= 1200
+    assert 1200 <= len(bundle.blog.split()) <= 2000
+
 
 def test_social_copywriter_snapshot_rejects_markdown_bold() -> None:
-    """A snapshot whose Twitter field uses Markdown `**bold**` violates contract."""
+    """A snapshot whose Twitter field uses Markdown `**bold**` fails CopyBundle."""
+    from pydantic import ValidationError
+
     bad = dict(_COPYWRITER_SNAPSHOT)
-    bad["twitter_thread"] = "1/ **we** just shipped\n2/ try it\n3/ today"
-    parsed: dict[str, Any] = json.loads(json.dumps(bad))
-    assert "**" in parsed["twitter_thread"], "fixture must contain the violation"
-    # The contract assertion the structure snapshot enforces would fail here.
-    with pytest.raises(AssertionError):
-        assert "**" not in parsed["twitter_thread"]
+    bad["twitter_thread"] = "1/ **we** just shipped\n2/ try it\n3/ today RT this"
+    stage = copy_mod.CopyStage(subprocess_run=_stub_run(json.dumps(bad)))
+
+    parsed = stage._invoke_subagent("social-copywriter", "write the copy")
+    with pytest.raises(ValidationError):
+        CopyBundle.model_validate(parsed)
+
+
+def test_social_copywriter_snapshot_rejects_short_blog() -> None:
+    """A snapshot whose blog is ~100 words fails CopyBundle's word-count bound."""
+    from pydantic import ValidationError
+
+    bad = dict(_COPYWRITER_SNAPSHOT)
+    bad["blog"] = "word " * 100
+    stage = copy_mod.CopyStage(subprocess_run=_stub_run(json.dumps(bad)))
+
+    parsed = stage._invoke_subagent("social-copywriter", "write the copy")
+    with pytest.raises(ValidationError):
+        CopyBundle.model_validate(parsed)
 
 
 # --------------------------------------------------------------------------- #
@@ -280,3 +312,24 @@ def test_tc_8_7_demo_script_writer_agent_file_exists_with_frontmatter() -> None:
     assert "model" in meta
     assert "tools" in meta
     assert isinstance(meta["tools"], list)
+
+
+def test_tc_13_7_social_copywriter_agent_file_exists_with_frontmatter() -> None:
+    """TC-13.7: `~/.claude/agents/social-copywriter.md` exists with name/model/tools."""
+    path = Path.home() / ".claude" / "agents" / "social-copywriter.md"
+    assert path.is_file(), f"agent file not installed at {path}"
+
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---"), "agent file must open with YAML frontmatter"
+    _, fm, _body = text.split("---", 2)
+
+    import yaml
+
+    meta = yaml.safe_load(fm)
+    assert isinstance(meta, dict)
+    assert meta.get("name") == "social-copywriter"
+    assert meta.get("model") == "sonnet"
+    assert "tools" in meta
+    assert isinstance(meta["tools"], list)
+    # Reports the uninstall command in the body (operator hygiene).
+    assert "rm ~/.claude/agents/social-copywriter.md" in _body
