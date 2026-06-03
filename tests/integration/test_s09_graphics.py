@@ -52,6 +52,23 @@ _CARD_DIMS = {
 }
 
 
+def _style_sheet_bytes() -> bytes:
+    """A small, known PNG standing in for the real first-screen screenshot.
+
+    Distinct from the solid brand-colour stills the mock returns, so a test can
+    assert the exact bytes are threaded into every Imagen card background.
+    """
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (32, 24), (12, 34, 56)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+#: The canned style-sheet bytes written by ``_build_project`` (computed once).
+_STYLE_SHEET_BYTES = _style_sheet_bytes()
+
+
 def _pinned_brief() -> dict[str, Any]:
     return {
         "hook_template_per_channel": {
@@ -87,6 +104,10 @@ class _StubGemini:
         self.calls = 0
         self._rate_limit_after = rate_limit_after
         self.ratios_seen: list[str] = []
+        #: The ``reference_image_bytes`` kwarg captured on each call (one entry
+        #: per Imagen call, in call order). Lets tests assert the style-sheet
+        #: screenshot is threaded into every card background.
+        self.refs_seen: list[bytes | None] = []
 
     def generate_image(
         self,
@@ -99,6 +120,7 @@ class _StubGemini:
     ) -> bytes:
         self.calls += 1
         self.ratios_seen.append(aspect_ratio)
+        self.refs_seen.append(reference_image_bytes)
         if self._rate_limit_after is not None and self.calls > self._rate_limit_after:
             raise GeminiRateLimited("HTTP 429 rate limited")
         # Return the still at the Gemini-native size for the ratio (the stage
@@ -124,7 +146,12 @@ class _Bundle:
 _BRIEFS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "briefs"
 
 
-def _build_project(tmp_path: Path, *, brief_fixture: str | None = None) -> Project:
+def _build_project(
+    tmp_path: Path,
+    *,
+    brief_fixture: str | None = None,
+    style_sheet: bool = True,
+) -> Project:
     root = tmp_path / "projects"
     root.mkdir()
     proj = Project.create(
@@ -158,6 +185,13 @@ def _build_project(tmp_path: Path, *, brief_fixture: str | None = None) -> Proje
         encoding="utf-8",
     )
     (brand_dir / "voice.md").write_text("caption_mode: chip\n", encoding="utf-8")
+
+    # 03_brand/style_sheet.png — the real first-screen website screenshot the
+    # s09 Imagen card backgrounds are conditioned on. Written with KNOWN bytes
+    # so tests can assert it is threaded into every generate_image call. Omitted
+    # when style_sheet=False to exercise the defensive None-guard.
+    if style_sheet:
+        (brand_dir / "style_sheet.png").write_bytes(_STYLE_SHEET_BYTES)
 
     # 04_plan/brief.json — pinned brief. A named fixture (NOT live LLM output)
     # overrides the inline default so stat-card conditionality is deterministic.
@@ -225,6 +259,50 @@ def test_tc_12_2_aspect_card_dimensions(tmp_path: Path) -> None:
     # One Imagen call per aspect card plus one for the OG card.
     assert gemini.calls == 5
     assert gemini.ratios_seen == ["1:1", "16:9", "9:16", "4:5", "og"]
+
+
+# --------------------------------------------------------------------------- #
+# Style-sheet grounding — every Imagen card background is conditioned on the
+# real 03_brand/style_sheet.png screenshot (passed as reference_image_bytes).
+# --------------------------------------------------------------------------- #
+
+
+def test_style_sheet_threaded_into_all_imagen_cards(tmp_path: Path) -> None:
+    """Every aspect card + the OG card receive the style-sheet bytes as the ref."""
+    proj = _build_project(tmp_path)
+    gemini = _StubGemini()
+    _run(proj, gemini)
+    # 4 aspect cards + 1 OG = 5 Imagen calls, each grounded in the style sheet.
+    assert gemini.calls == 5
+    assert gemini.refs_seen == [_STYLE_SHEET_BYTES] * 5
+
+
+def test_style_sheet_threaded_into_stat_cards(tmp_path: Path) -> None:
+    """When has_stat_card=true the 4 stat cards are also style-sheet-grounded."""
+    proj = _build_project(tmp_path, brief_fixture="stat_true.json")
+    gemini = _StubGemini()
+    _run(proj, gemini)
+    # 4 aspect + 1 OG + 4 stat = 9 Imagen calls, all with the style-sheet ref.
+    assert gemini.calls == 9
+    assert gemini.refs_seen == [_STYLE_SHEET_BYTES] * 9
+
+
+def test_cards_render_without_style_sheet(tmp_path: Path) -> None:
+    """Defensive: absent 03_brand/style_sheet.png → ref=None, no crash."""
+    from PIL import Image
+
+    proj = _build_project(tmp_path, style_sheet=False)
+    gemini = _StubGemini()
+    result = _run(proj, gemini)
+    assert result.status == StageStatus.DONE
+    # All 5 Imagen calls made with reference_image_bytes=None.
+    assert gemini.calls == 5
+    assert gemini.refs_seen == [None] * 5
+    # Cards still render at the correct dimensions.
+    out = proj.stage_dir("09_graphics")
+    for name, dims in _CARD_DIMS.items():
+        with Image.open(out / name) as img:
+            assert img.size == dims
 
 
 # --------------------------------------------------------------------------- #

@@ -74,6 +74,13 @@ _BRIEF_REL: str = "04_plan/brief.json"
 _PROPOSAL_REL: str = "03_brand/proposal.json"
 _ENTRY_REL: str = "01_pick/entry.json"
 
+#: The real first-screen website screenshot produced by ``s03_brand``. Used as
+#: the Gemini ``reference_image_bytes`` so every Imagen card background is
+#: grounded in the brand's actual UI/style (not text-to-image from the palette
+#: alone). A declared ``s03_brand`` output, so it should always exist; the
+#: ``run()`` read is ``None``-guarded defensively.
+_STYLE_SHEET_REL: str = "03_brand/style_sheet.png"
+
 #: Fallback palette used only if ``proposal.json`` carries < 3 hex codes
 #: (a degenerate brand pack). Matches the s08 caption fallback.
 _FALLBACK_PALETTE: tuple[str, str, str] = ("#111111", "#888888", "#EEEEEE")
@@ -259,6 +266,15 @@ class GraphicsStage(BaseStage):
         font_path = self._brand_font_path(project)
         image_model = project.settings.gemini_image_model
 
+        # Read the real brand style-sheet screenshot ONCE and pass it as the
+        # Gemini reference image for every Imagen card background, grounding the
+        # generated backgrounds in the brand's actual UI. It is a declared
+        # s03_brand output so it should always exist; the None guard is defensive.
+        style_sheet_path = project.path / _STYLE_SHEET_REL
+        ref = (
+            style_sheet_path.read_bytes() if style_sheet_path.is_file() else None
+        )
+
         stage_dir = project.stage_dir(self.id)
         stage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -278,6 +294,7 @@ class GraphicsStage(BaseStage):
                 palette=palette,
                 font_path=font_path,
                 image_model=image_model,
+                reference_image_bytes=ref,
                 out_path=card_path,
             )
             cost += IMAGEN_IMAGE_USD
@@ -293,6 +310,7 @@ class GraphicsStage(BaseStage):
             palette=palette,
             font_path=font_path,
             image_model=image_model,
+            reference_image_bytes=ref,
             out_path=stage_dir / og_filename,
         )
         cost += IMAGEN_IMAGE_USD
@@ -312,6 +330,7 @@ class GraphicsStage(BaseStage):
                     palette=palette,
                     font_path=font_path,
                     image_model=image_model,
+                    reference_image_bytes=ref,
                     out_path=stage_dir / filename,
                 )
                 cost += IMAGEN_IMAGE_USD
@@ -366,14 +385,16 @@ class GraphicsStage(BaseStage):
         palette: tuple[str, str, str],
         font_path: Path | None,
         image_model: str,
+        reference_image_bytes: bytes | None,
         out_path: Path,
     ) -> None:
         """Render one aspect-ratio card -> ``out_path`` (exact ``dims``).
 
-        Gemini Imagen generates the background at ``ratio``; the bytes are
-        normalised to the canonical ``dims`` (RGB), then the entry ``headline``
-        is overlaid with the brand display font via ``draw_outlined`` on the
-        8-point grid (>= 8 % padding). Delegates to the shared
+        Gemini Imagen generates the background at ``ratio`` (conditioned on the
+        brand ``reference_image_bytes`` style-sheet screenshot when present); the
+        bytes are normalised to the canonical ``dims`` (RGB), then the entry
+        ``headline`` is overlaid with the brand display font via ``draw_outlined``
+        on the 8-point grid (>= 8 % padding). Delegates to the shared
         :meth:`_render_imagen_card` body.
         """
         self._render_imagen_card(
@@ -384,6 +405,7 @@ class GraphicsStage(BaseStage):
             palette=palette,
             font_path=font_path,
             image_model=image_model,
+            reference_image_bytes=reference_image_bytes,
             out_path=out_path,
         )
 
@@ -453,10 +475,11 @@ class GraphicsStage(BaseStage):
         primary, accent, neutral = palette
         return (
             f"Clean, modern, on-brand marketing background for a software launch "
-            f"card ({ratio}). Use ONLY these brand colours: primary {primary}, "
-            f"accent {accent}, neutral {neutral}. Large areas of flat brand colour "
-            f"with ample negative space and high contrast for an overlaid "
-            f"headline. No text, no logos, no busy detail. Theme: {headline!r}."
+            f"card ({ratio}), consistent with the supplied brand reference image. "
+            f"Use ONLY these brand colours: primary {primary}, accent {accent}, "
+            f"neutral {neutral}. Large areas of flat brand colour with ample "
+            f"negative space and high contrast for an overlaid headline. No text, "
+            f"no logos, no busy detail. Theme: {headline!r}."
         )
 
     @staticmethod
@@ -494,6 +517,7 @@ class GraphicsStage(BaseStage):
         prompt: str,
         ratio: AspectRatio,
         image_model: str,
+        reference_image_bytes: bytes | None = None,
     ) -> bytes:
         """Call Imagen with a bounded retry on transient errors.
 
@@ -510,6 +534,7 @@ class GraphicsStage(BaseStage):
                     prompt,
                     model=image_model,
                     seed=0,
+                    reference_image_bytes=reference_image_bytes,
                     aspect_ratio=ratio,
                 )
             except GeminiSafetyBlocked:
@@ -534,13 +559,15 @@ class GraphicsStage(BaseStage):
         palette: tuple[str, str, str],
         font_path: Path | None,
         image_model: str,
+        reference_image_bytes: bytes | None,
         out_path: Path,
     ) -> None:
         """Render the OG / social card (1200x630) -> ``out_path``.
 
-        Gemini Imagen generates the background at the ``og`` aspect (1200x630);
-        the bytes are normalised to ``dims`` (RGB), then the entry ``headline``
-        is overlaid with the brand display font via the shared
+        Gemini Imagen generates the background at the ``og`` aspect (1200x630),
+        conditioned on the brand ``reference_image_bytes`` style-sheet screenshot
+        when present; the bytes are normalised to ``dims`` (RGB), then the entry
+        ``headline`` is overlaid with the brand display font via the shared
         :meth:`_overlay_headline` (same 8-point-grid / >= 8 % padding rules as
         the aspect cards). This is the card that fronts a shared link.
         """
@@ -552,6 +579,7 @@ class GraphicsStage(BaseStage):
             palette=palette,
             font_path=font_path,
             image_model=image_model,
+            reference_image_bytes=reference_image_bytes,
             out_path=out_path,
         )
 
@@ -565,14 +593,17 @@ class GraphicsStage(BaseStage):
         palette: tuple[str, str, str],
         font_path: Path | None,
         image_model: str,
+        reference_image_bytes: bytes | None,
         out_path: Path,
     ) -> None:
         """Render one conditional stat card at ``ratio`` -> ``out_path``.
 
         Called once per aspect ratio ONLY when ``brief.has_stat_card`` is true
         (the dispatcher gates the cost; ``run()`` gates the call). The render
-        path mirrors the aspect card: an on-brand Imagen background normalised
-        to ``dims`` with the headline overlaid via :meth:`_overlay_headline`.
+        path mirrors the aspect card: an on-brand Imagen background (conditioned
+        on the brand ``reference_image_bytes`` style-sheet screenshot when
+        present) normalised to ``dims`` with the headline overlaid via
+        :meth:`_overlay_headline`.
         """
         self._render_imagen_card(
             clients=clients,
@@ -582,6 +613,7 @@ class GraphicsStage(BaseStage):
             palette=palette,
             font_path=font_path,
             image_model=image_model,
+            reference_image_bytes=reference_image_bytes,
             out_path=out_path,
         )
 
@@ -595,21 +627,25 @@ class GraphicsStage(BaseStage):
         palette: tuple[str, str, str],
         font_path: Path | None,
         image_model: str,
+        reference_image_bytes: bytes | None,
         out_path: Path,
     ) -> None:
         """Imagen background (at ``ratio``) + headline overlay -> ``out_path``.
 
         The shared body behind :meth:`_render_aspect_card` / :meth:`_render_og` /
-        :meth:`_render_stat`: generate the still with the bounded transient retry,
-        normalise to the canonical ``dims`` (RGB), overlay the headline, and save
-        as PNG.
+        :meth:`_render_stat`: generate the still with the bounded transient retry
+        (conditioned on the brand ``reference_image_bytes`` style-sheet screenshot
+        when present), normalise to the canonical ``dims`` (RGB), overlay the
+        headline, and save as PNG.
         """
         from io import BytesIO
 
         from PIL import Image
 
         prompt = self._background_prompt(headline, palette, ratio)
-        raw = self._generate_still_with_retry(clients, prompt, ratio, image_model)
+        raw = self._generate_still_with_retry(
+            clients, prompt, ratio, image_model, reference_image_bytes
+        )
 
         with Image.open(BytesIO(raw)) as src:
             background = src.convert("RGB")
