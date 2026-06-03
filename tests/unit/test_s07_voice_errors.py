@@ -15,7 +15,6 @@ No real ElevenLabs / WhisperX calls; the WhisperX model is never instantiated.
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -91,7 +90,7 @@ def test_tc_10_4_quota_exceeded_no_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _seed_storyboard(tmp_path, ["A", "B", "C", "D"])
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/local/bin/whisperx")
+    monkeypatch.setattr(voice_mod, "_whisper_installed", lambda: True)
 
     el = MagicMock()
     el.synthesize_speech.side_effect = ElevenLabsQuotaExceeded()
@@ -136,7 +135,7 @@ def test_tc_10_6_whisperx_missing_fails_before_synth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _seed_storyboard(tmp_path, ["A", "B", "C", "D"])
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setattr(voice_mod, "_whisper_installed", lambda: False)
 
     el = MagicMock()
     wx = MagicMock()
@@ -148,7 +147,7 @@ def test_tc_10_6_whisperx_missing_fails_before_synth(
     with pytest.raises(StageInputMissing) as exc_info:
         stage.check_inputs(project)  # type: ignore[arg-type]
 
-    assert "whisperx" in str(exc_info.value).lower()
+    assert "whisper" in str(exc_info.value).lower()
     # Synthesis API never touched.
     el.synthesize_speech.assert_not_called()
 
@@ -163,7 +162,7 @@ def test_run_records_cost_and_words(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _seed_storyboard(tmp_path, ["A", "B", "C", "D"])
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/local/bin/whisperx")
+    monkeypatch.setattr(voice_mod, "_whisper_installed", lambda: True)
 
     el = MagicMock()
 

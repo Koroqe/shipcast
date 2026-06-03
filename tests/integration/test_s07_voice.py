@@ -274,13 +274,11 @@ def _manifest(projects_root: Path) -> Any:
 def _install_clients(
     monkeypatch: pytest.MonkeyPatch, *, elevenlabs: Any, whisperx: Any
 ) -> None:
-    # Make the `whisperx` PATH pre-flight pass (the binary is not installed in
-    # CI); the actual alignment client is mocked, so no real model loads.
-    import shutil
+    # Make the whisper-backend pre-flight pass (openai-whisper is not installed
+    # in CI); the actual alignment client is mocked, so no real model loads.
+    from shipcast.stages import s07_voice
 
-    monkeypatch.setattr(
-        shutil, "which", lambda name: "/usr/local/bin/whisperx" if name == "whisperx" else None
-    )
+    monkeypatch.setattr(s07_voice, "_whisper_installed", lambda: True)
 
     def _factory(project: Any) -> Any:
         class _B:

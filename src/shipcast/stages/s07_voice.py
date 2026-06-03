@@ -13,9 +13,10 @@ Voice identity (FR-9.2): the ElevenLabs ``voice_id`` and ``voice_settings`` come
 from ``Settings`` ONLY. ``03_brand/voice.md`` constrains the LLM's *tone* in the
 copy/script stages; it NEVER overrides ``Settings.voice_id`` here.
 
-Pre-flight (UC-9-E3): ``check_inputs`` verifies a ``whisperx`` binary is on PATH
-(the alignment step needs it) BEFORE any synthesis can run, so a missing tool
-fails fast without spending an ElevenLabs call.
+Pre-flight (UC-9-E3): ``check_inputs`` verifies the ``openai-whisper`` package
+(the optional ``whisperx`` extra, imported as ``whisper``) is importable BEFORE
+any synthesis can run, so a missing backend fails fast without spending an
+ElevenLabs call.
 
 Error handling
 --------------
@@ -36,7 +37,7 @@ gate; the recorded cost uses the ACTUAL synthesized MP3 duration.
 
 from __future__ import annotations
 
-import shutil
+import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
@@ -59,8 +60,20 @@ if TYPE_CHECKING:
 _WORDS_PER_MINUTE: float = 150.0
 #: Average characters per spoken word (incl. trailing space) for the estimate.
 _CHARS_PER_WORD: float = 6.0
-#: The WhisperX-shaped CLI binary the local alignment step needs on PATH.
-_WHISPERX_BINARY: str = "whisperx"
+#: The import name of the local alignment backend (the optional `whisperx`
+#: extra installs `openai-whisper`, which imports as `whisper`). The backend
+#: is a Python PACKAGE, not a CLI binary — so the pre-flight checks
+#: importability, not `PATH`.
+_WHISPER_PACKAGE: str = "whisper"
+
+
+def _whisper_installed() -> bool:
+    """True when the openai-whisper alignment backend is importable.
+
+    Module-level so tests can monkeypatch it. The heavy package itself is NOT
+    imported here — `find_spec` only checks availability.
+    """
+    return importlib.util.find_spec(_WHISPER_PACKAGE) is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -151,20 +164,21 @@ class VoiceStage(BaseStage):
 
     # ------------------------------------------------------------- inputs
     def check_inputs(self, project: Project) -> None:
-        """Default upstream gate PLUS a fail-fast ``whisperx``-on-PATH check.
+        """Default upstream gate PLUS a fail-fast whisper-backend pre-flight.
 
-        The WhisperX alignment step (FR-9.4) needs the ``whisperx`` binary; if it
-        is absent we fail BEFORE any ElevenLabs synthesis is spent (UC-9-E3). The
-        binary check runs FIRST (a cheap, side-effect-free pre-flight) so the
-        descriptive missing-tool error surfaces even when the upstream gate would
-        also complain.
+        The word-alignment step (FR-9.4) needs the ``openai-whisper`` package
+        (the optional ``whisperx`` extra, imported as ``whisper``); if it is not
+        importable we fail BEFORE any ElevenLabs synthesis is spent (UC-9-E3).
+        The check runs FIRST (a cheap, side-effect-free ``find_spec`` — it does
+        NOT import the heavy package) so the descriptive missing-tool error
+        surfaces even when the upstream gate would also complain.
         """
-        if shutil.which(_WHISPERX_BINARY) is None:
+        if not _whisper_installed():
             raise StageInputMissing(
-                f"stage {self.id!r} requires the {_WHISPERX_BINARY!r} binary on "
-                f"PATH for word-timestamp alignment; install it "
-                f"(e.g. `uv sync --extra whisperx`) and rerun. Synthesis was "
-                f"NOT attempted."
+                f"stage {self.id!r} requires the openai-whisper package "
+                f"(imported as {_WHISPER_PACKAGE!r}) for word-timestamp "
+                f"alignment; install it (e.g. `uv sync --extra whisperx`) and "
+                f"rerun. Synthesis was NOT attempted."
             )
         super().check_inputs(project)
 
