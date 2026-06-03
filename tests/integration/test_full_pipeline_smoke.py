@@ -7,7 +7,7 @@ of the operator E2E smokes (Slices 22/23): it exercises the real stage code,
 real manifest writes, the real human-gate approval flow, the real cost-cap gate,
 and the real artifact wiring — catching integration gaps where one stage writes
 an output the next stage cannot find. The real-API smokes (real keys, real spend,
-the live `getdeal-platform-monorepo`) are operator-driven and documented in
+the live `example-project`) are operator-driven and documented in
 ``docs/qa/shipcast_e2e_runbook.md``.
 
 Design — REAL stages, mocked CLIENTS (vs Slice 21's fake cost stages)
@@ -75,7 +75,7 @@ runner = CliRunner()
 # --------------------------------------------------------------------------- #
 
 _REPO_FIXTURES = (
-    Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "getdeal_min"
+    Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "example_min"
 )
 _CHANGELOG = (_REPO_FIXTURES / "CHANGELOG.md").read_text(encoding="utf-8")
 

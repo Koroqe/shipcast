@@ -39,7 +39,7 @@ from shipcast.stages.s01_pick import PickStage
 
 runner = CliRunner()
 
-_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "getdeal_min"
+_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "example_min"
 _CHANGELOG = (_FIXTURES / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
@@ -66,7 +66,7 @@ def repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def target_repo(repo_root: Path) -> Path:
     """A minimal target repo with a canonical CHANGELOG.md."""
-    repo = repo_root / "getdeal-platform-monorepo"
+    repo = repo_root / "example-project"
     repo.mkdir()
     (repo / "CHANGELOG.md").write_text(_CHANGELOG, encoding="utf-8")
     return repo
@@ -92,7 +92,7 @@ def test_tc_4_7_pick_creates_project_and_writes_entry_json(
     assert result.exit_code == 0, result.output
 
     # Slug derived as "<repo-short>--<entry-slug>".
-    slug = "getdeal-platform-monorepo--add-csv-export"
+    slug = "example-project--add-csv-export"
     project_dir = projects_root / slug
     assert project_dir.is_dir()
 
@@ -129,7 +129,7 @@ def test_tc_4_8_unknown_heading_raises_entry_not_found(
     )
     assert result.exit_code == cli._EXIT_STAGE_FAILURE, result.output
 
-    slug = "getdeal-platform-monorepo--nonexistent-feature"
+    slug = "example-project--nonexistent-feature"
     project_dir = projects_root / slug
     m = Manifest.load(project_dir / "manifest.json")
     rec = m.stages["01_pick"]
@@ -155,7 +155,7 @@ def test_tc_4_9_missing_changelog_raises_file_missing(
     file is never auto-created.)
     """
     settings = Settings()
-    slug = "getdeal-platform-monorepo--add-csv-export"
+    slug = "example-project--add-csv-export"
     project = Project.create(
         projects_root,
         slug,
@@ -166,7 +166,7 @@ def test_tc_4_9_missing_changelog_raises_file_missing(
     project.input_path.write_text(
         "repo_path: '" + str(target_repo) + "'\n"
         "entry_heading: 'Add CSV export'\n"
-        "brand_slug: 'getdeal'\n"
+        "brand_slug: 'acme'\n"
         "video_mode: 'standard'\n",
         encoding="utf-8",
     )
@@ -235,7 +235,7 @@ def test_tc_4_12_rerun_byte_identical_entry_json(
     args = [*_root(projects_root), "pick", str(target_repo), "--entry", "Add CSV export"]
     assert runner.invoke(cli.app, args).exit_code == 0
 
-    slug = "getdeal-platform-monorepo--add-csv-export"
+    slug = "example-project--add-csv-export"
     entry_path = projects_root / slug / "01_pick" / "entry.json"
     first = entry_path.read_bytes()
 
@@ -253,13 +253,13 @@ def test_tc_4_12_matches_pinned_fixture(
     args = [*_root(projects_root), "pick", str(target_repo), "--entry", "Add CSV export"]
     assert runner.invoke(cli.app, args).exit_code == 0
 
-    slug = "getdeal-platform-monorepo--add-csv-export"
+    slug = "example-project--add-csv-export"
     entry_path = projects_root / slug / "01_pick" / "entry.json"
     fixture = (
         Path(__file__).resolve().parent.parent
         / "fixtures"
         / "repos"
-        / "getdeal_min_entry.json"
+        / "example_min_entry.json"
     )
     assert entry_path.read_bytes() == fixture.read_bytes()
 
@@ -305,7 +305,7 @@ def test_pick_heading_match_is_trimmed_and_case_insensitive(
     )
     assert result.exit_code == 0, result.output
     # Slug derived from the (slugified) padded heading.
-    slug = "getdeal-platform-monorepo--add-csv-export"
+    slug = "example-project--add-csv-export"
     entry_path = projects_root / slug / "01_pick" / "entry.json"
     entry = ChangelogEntry.model_validate_json(entry_path.read_text(encoding="utf-8"))
     assert entry.name == "Add CSV export"

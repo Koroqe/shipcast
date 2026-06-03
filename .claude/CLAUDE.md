@@ -113,4 +113,4 @@ must report zero failures.
 
 ## Reference plan
 
-Full 24-slice implementation plan lives at `/Users/aleksei/.claude/plans/okay-so-currently-i-unified-canyon.md`.
+Full 24-slice implementation plan lives at `docs/qa/shipcast_implementation_plan.md`.

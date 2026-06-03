@@ -50,7 +50,7 @@ from shipcast.schemas import VideoBeats
 runner = CliRunner()
 
 _REPO_FIXTURES = (
-    Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "getdeal_min"
+    Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "example_min"
 )
 _CHANGELOG = (_REPO_FIXTURES / "CHANGELOG.md").read_text(encoding="utf-8")
 
@@ -62,7 +62,7 @@ REAL_PNG = (
     b"\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
-SLUG = "getdeal-platform-monorepo--add-csv-export"
+SLUG = "example-project--add-csv-export"
 BRAND_SLUG = "test-brand"
 
 _HERO_PROMPT = "SECRET-HERO-PROMPT-must-not-leak-to-logs-998877"
@@ -90,7 +90,7 @@ def repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def target_repo(repo_root: Path) -> Path:
-    repo = repo_root / "getdeal-platform-monorepo"
+    repo = repo_root / "example-project"
     repo.mkdir()
     (repo / "CHANGELOG.md").write_text(_CHANGELOG, encoding="utf-8")
     return repo

@@ -1,2 +1,3 @@
 """PIL composition helpers — caption chips, text outline, layout grid.
-Vendored and adapted from 5-minute-library/scripts/{subtitle_burn,build_outro}.py."""
+Vendored and adapted from the upstream pipeline scaffold's subtitle-burn and
+outro-builder scripts."""

@@ -4,15 +4,15 @@ shipcast is a Python auto-marketing factory that turns one `CHANGELOG.md` entry 
 
 There is no web interface, no database, and no remote server. The system is designed for a solo operator running on macOS or Linux. Every stage produces artifacts that the operator reviews and explicitly approves before the next stage can start.
 
-**First target:** `getdeal-platform-monorepo` (live web app with a reachable URL).
+**First target:** `example-project` (live web app with a reachable URL).
 
-**Sibling project** to `5-minute-library`. The CLI dispatcher, manifest abstraction, Stage protocol, human-gate enforcement, locking, and client patterns are copied verbatim from that project; only the stage classes, schemas, marketing modules, and sub-agents are new.
+**Scaffold reuse.** The CLI dispatcher, manifest abstraction, Stage protocol, human-gate enforcement, locking, and client patterns are carried over verbatim from a proven upstream pipeline scaffold; only the stage classes, schemas, marketing modules, and sub-agents are new.
 
 ## Sections
 
 | # | Feature / Stage | Status |
 |---|-----------------|--------|
-| 1 | [Factory Scaffold and Core Invariants](#1-factory-scaffold-and-core-invariants) | Defined |
+| 1 | [Core Scaffold and Core Invariants](#1-core-scaffold-and-core-invariants) | Defined |
 | 2 | [Input Contract and Validation](#2-input-contract-and-validation) | Defined |
 | 3 | [Brand Pack Contract and s03_brand](#3-brand-pack-contract-and-s03_brand) | Defined |
 | 4 | [Stage 01: Pick Changelog Entry (s01_pick)](#4-stage-01-pick-changelog-entry-s01_pick) | Defined |
@@ -32,13 +32,13 @@ There is no web interface, no database, and no remote server. The system is desi
 
 ---
 
-## 1. Factory Scaffold and Core Invariants
+## 1. Core Scaffold and Core Invariants
 
 ### Feature Description
 
-The factory scaffold is the foundational harness that all pipeline stages are built on. It delivers: the repo structure, a `Manifest` abstraction that tracks every stage's status in a single `manifest.json` per project, a Typer CLI dispatcher that enforces human-approval gates between stages, and the concurrency, hashing, logging, and error infrastructure. This section maps to Slices 1–4 of the implementation plan.
+The core scaffold is the foundational harness that all pipeline stages are built on. It delivers: the repo structure, a `Manifest` abstraction that tracks every stage's status in a single `manifest.json` per project, a Typer CLI dispatcher that enforces human-approval gates between stages, and the concurrency, hashing, logging, and error infrastructure. This section maps to Slices 1–4 of the implementation plan.
 
-The scaffold is copied verbatim from `5-minute-library` (with package rename) and then extended with shipcast-specific stage IDs, settings, and the cost ledger.
+The scaffold is carried over verbatim from a proven upstream pipeline (with package rename) and then extended with shipcast-specific stage IDs, settings, and the cost ledger.
 
 ### User Story
 
@@ -133,7 +133,7 @@ As a marketing operator, I want a CLI that lets me create a project from a chang
 - AC-1.2: `uv run mypy --strict src/shipcast` reports zero errors.
 - AC-1.3: `uv run ruff check src tests` reports zero findings.
 - AC-1.4: `uv run pytest -v` passes; `shipcast.manifest` coverage is 100%; package overall coverage is ≥ 90%.
-- AC-1.5: `shipcast pick ../getdeal-platform-monorepo --entry "<heading>"` creates `projects/<slug>/manifest.json` with all eleven stages in `pending` and a populated `config_snapshot` that contains no API key values.
+- AC-1.5: `shipcast pick ../example-project --entry "<heading>"` creates `projects/<slug>/manifest.json` with all eleven stages in `pending` and a populated `config_snapshot` that contains no API key values.
 - AC-1.6: Running any stage whose upstream is `done` but not approved exits with code 2 and prints `StageNotApproved`.
 - AC-1.7: `shipcast approve <slug> <stage_id>` when stage is not `done` exits with code 1 and prints `CannotApproveNonDoneStage`.
 - AC-1.8: Manually editing any output file and then running `shipcast approve` prints "Manual edits detected on N files" and records `manually_edited: true`.
@@ -150,7 +150,7 @@ As a marketing operator, I want a CLI that lets me create a project from a chang
 | `pyproject.toml` | New — `shipcast` entry point, dependencies |
 | `config.toml` | New — model IDs, voice ID, cost constants, durations |
 | `.env.example` | New — key names only: `ANTHROPIC_API_KEY=`, `ELEVENLABS_API_KEY=`, `GEMINI_API_KEY=` |
-| `src/shipcast/manifest.py` | New — copied from `5-minute-library` with package rename |
+| `src/shipcast/manifest.py` | New — carried over from the upstream scaffold with package rename |
 | `src/shipcast/cost.py` | New — `CostLedger`, per-tool unit-cost constants |
 | `src/shipcast/cli.py` | New — Typer app, 11 verbs, cost-cap gate |
 | `src/shipcast/project.py` | New — `Project.create`, `Project.load`, path helpers |
@@ -540,8 +540,8 @@ As an operator, I want a synthesized voiceover with word-level timestamps so tha
 | Path | Change |
 |------|--------|
 | `src/shipcast/stages/s07_voice.py` | New |
-| `src/shipcast/clients/elevenlabs_client.py` | Extended — from 5-min-lib, verified against v3 API |
-| `src/shipcast/clients/whisperx_client.py` | Copied — from 5-min-lib |
+| `src/shipcast/clients/elevenlabs_client.py` | Extended — from the upstream scaffold, verified against v3 API |
+| `src/shipcast/clients/whisperx_client.py` | Carried over from the upstream scaffold |
 
 ---
 
@@ -561,7 +561,7 @@ As an operator, I want a finished showcase video with captions and background mu
 
 - FR-10.1: `s08_video._assemble_raw()` concatenates the four beat clips from `06_video_assets/`, mixes in `07_voice/narration.mp3` as the primary audio track, and optionally mixes in a background music track from `projects/_brand/<slug>/music/*.mp3` (first alphabetically). When bgm is present, narration is ducked to −3 dB relative to bgm.
 - FR-10.2: `s08_video._overlay_captions()` burns captions using word timestamps from `07_voice/words.json`. Caption mode is read from the `caption_mode:` line in `03_brand/voice.md`. Recognized values: `chip`, `karaoke`, `reveal`. If the line is absent or the value is unrecognized, the default is `chip`.
-- FR-10.3: Caption rendering is implemented in `src/shipcast/composition/captions.py`, adapted from the `5-minute-library` subtitle-burn script to fit the 1080×1920 frame.
+- FR-10.3: Caption rendering is implemented in `src/shipcast/composition/captions.py`, adapted from the upstream scaffold subtitle-burn renderer to fit the 1080×1920 frame.
 - FR-10.4: `s08_video._export_loop()` takes the first 6 s of beat[0] clip, center-crops it to 1080×1080, removes all audio, and exports both an MP4 and a GIF.
 - FR-10.5: Output files written by `s08_video`:
   - `08_video/showcase.mp4` — full showcase video
@@ -581,7 +581,7 @@ As an operator, I want a finished showcase video with captions and background mu
 | Path | Change |
 |------|--------|
 | `src/shipcast/stages/s08_video.py` | New |
-| `src/shipcast/composition/captions.py` | New — adapted from 5-min-lib subtitle-burn |
+| `src/shipcast/composition/captions.py` | New — adapted from the upstream scaffold subtitle-burn renderer |
 | `src/shipcast/composition/layout.py` | New — `draw_outlined`, grid/padding helpers |
 | `src/shipcast/clients/ffmpeg_client.py` | Extended — concat-mixed-input helper, loop/GIF export |
 

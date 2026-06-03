@@ -67,7 +67,7 @@ def allowed_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 def _valid_repo(root: Path) -> Path:
     """A real directory under `root` containing a CHANGELOG.md."""
-    repo = root / "getdeal-platform-monorepo"
+    repo = root / "example-project"
     repo.mkdir()
     (repo / "CHANGELOG.md").write_text("# Changelog\n")
     return repo
@@ -78,7 +78,7 @@ def _base_kwargs(repo: Path, **overrides: Any) -> dict[str, Any]:
         "repo_path": str(repo),
         "entry_heading": "Add CSV export",
         "live_url": "https://example.com",
-        "brand_slug": "getdeal",
+        "brand_slug": "acme",
         "video_mode": "standard",
     }
     kwargs.update(overrides)
@@ -176,7 +176,7 @@ def test_reject_repo_path_with_dotdot(public_ip_resolver: None) -> None:
             repo_path="/Users/aleksei/Documents/Projects.nosync/../etc/passwd",
             entry_heading="Add CSV export",
             live_url="https://example.com",
-            brand_slug="getdeal",
+            brand_slug="acme",
             video_mode="standard",
         )
 
@@ -190,7 +190,7 @@ def test_reject_repo_path_outside_allowed_root(
             repo_path="/tmp/some-other-project",
             entry_heading="Add CSV export",
             live_url="https://example.com",
-            brand_slug="getdeal",
+            brand_slug="acme",
             video_mode="standard",
         )
 
@@ -302,7 +302,7 @@ def test_accept_valid_standard(
         )
     )
     assert model.video_mode == "standard"
-    assert model.brand_slug == "getdeal"
+    assert model.brand_slug == "acme"
     assert model.feature_walkthrough is not None
     assert len(model.feature_walkthrough) == 2
 

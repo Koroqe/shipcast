@@ -17,7 +17,7 @@
 
 | Run | Slice | Mode | Acceptance gate |
 |-----|-------|------|-----------------|
-| Run 1 | 22 | `standard` | All 11 stages `done`+approved on a real `getdeal-platform-monorepo` entry; `release.zip` carries the full asset set; **wall-clock ≤ 30 min, cost ≤ $3.00**. |
+| Run 1 | 22 | `standard` | All 11 stages `done`+approved on a real `example-project` entry; `release.zip` carries the full asset set; **wall-clock ≤ 30 min, cost ≤ $3.00**. |
 | Run 2 | 23 | `premium`  | One marquee entry through premium mode; `06_video_assets/beat_00.mp4` is the ~8 s Veo hero clip; **wall-clock ≤ 45 min, cost ≤ $8.00**. |
 
 The cost cap is enforced by the dispatcher BEFORE every paid call: a standard run
@@ -45,14 +45,14 @@ stage before any paid API is touched). Wall-clock is measured by the operator.
    pre-flights `whisperx`; absent → the stage fails fast before any synthesis),
    and `gh` + `git` (read-only repo signals; degrade gracefully if `gh` is
    unauthenticated).
-5. **Target repo:** `../getdeal-platform-monorepo/` exists under
+5. **Target repo:** `../example-project/` exists under
    `/Users/aleksei/Documents/Projects.nosync/` and contains a `CHANGELOG.md`
    with the entry you intend to pick. shipcast NEVER writes into the target repo.
 6. **A reachable `https` `live_url`** (optional but recommended) for the brand /
    enrich Playwright extraction. It MUST be public — RFC1918 / loopback /
    link-local hosts are rejected by the SSRF validator. Omit it to skip the
    Playwright sub-steps (provide a `palette.hint.json` in the brand pack instead).
-7. **Brand pack populated** at `projects/_brand/getdeal/` (the `--brand-slug`):
+7. **Brand pack populated** at `projects/_brand/acme/` (the `--brand-slug`):
    - `voice.md` (REQUIRED — tone, banned phrases, CTA pattern, `caption_mode:` line)
    - `fonts/` with ≥ 1 `.ttf` display font (REQUIRED)
    - `logo.svg` (or `logo.png` with transparency) (REQUIRED)
@@ -83,7 +83,7 @@ plus the changed files. Use `shipcast <verb> <slug> --rerun` to redo a stage and
 downstream approvals without `--yes`).
 
 The derived project slug is `<repo-short>--<entry-slug>`, e.g.
-`getdeal-platform-monorepo--add-csv-export`. Use `shipcast status <slug>` (a
+`example-project--add-csv-export`. Use `shipcast status <slug>` (a
 read-only, no-lock view) to watch progress.
 
 ---
@@ -96,11 +96,11 @@ Pick the latest CHANGELOG entry, then walk all 11 gates in `standard` mode.
 # 0. Start a stopwatch (wall-clock is an acceptance gate).
 
 # 1. Create the project + run 01_pick (heading is the text between '### ' and ' — HH:MM UTC').
-shipcast pick ../getdeal-platform-monorepo \
+shipcast pick ../example-project \
   --entry "Investor onboarding website auto-fill" \
-  --brand-slug getdeal \
+  --brand-slug acme \
   --video-mode standard
-  # --live-url https://app.getdeal.example   # optional, public https only
+  # --live-url https://app.example.com   # optional, public https only
 
 shipcast approve <slug> 01_pick
 
@@ -163,9 +163,9 @@ Same flow on ONE marquee entry, with `--video-mode premium`. Premium renders
 ```sh
 # 0. Start a stopwatch.
 
-shipcast pick ../getdeal-platform-monorepo \
+shipcast pick ../example-project \
   --entry "<marquee entry heading>" \
-  --brand-slug getdeal \
+  --brand-slug acme \
   --video-mode premium
 
 shipcast approve <slug> 01_pick

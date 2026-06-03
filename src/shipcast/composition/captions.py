@@ -1,9 +1,9 @@
 """PIL caption-frame renderer for the 1080x1920 showcase video.
 
-Vendored and reframed from ``5-minute-library/scripts/subtitle_burn.py`` (+
-``_subtitle_palettes.py``), then extended with two extra modes:
+Vendored and reframed from the upstream pipeline scaffold's subtitle-burn
+renderer, then extended with two extra modes:
 
-* ``chip``    - the factory's varied-tag-size chip strip; the currently-spoken
+* ``chip``    - the original varied-tag-size chip strip; the currently-spoken
                 word gets the ``active`` palette pair, the rest get ``inactive``.
                 This is the channel default.
 * ``karaoke`` - the chunk is rendered as a single inline word run; only the
@@ -15,9 +15,10 @@ Vendored and reframed from ``5-minute-library/scripts/subtitle_burn.py`` (+
 
 Brand pairing: the palette is built from the three approved brand hex codes
 (``primary``, ``accent``, ``neutral``) so captions read on-brand. Homebrew
-ffmpeg 8.x ships without libass/freetype, so - exactly as in the factory - we
-render one transparent RGBA PNG per video frame with PIL and composite them via
-ffmpeg's ``overlay`` filter (the stage owns that ffmpeg pass).
+ffmpeg 8.x ships without libass/freetype, so - exactly as in the upstream
+scaffold - we render one transparent RGBA PNG per video frame with PIL and
+composite them via ffmpeg's ``overlay`` filter (the stage owns that ffmpeg
+pass).
 
 This module is **pure** (no external API, no subprocess). PIL is imported at
 module top, which is fine because the module is only imported lazily inside
@@ -144,7 +145,7 @@ def _load_font(size: int, font_path: Path | None) -> ImageFont.FreeTypeFont:
 
 
 def _size_for(word: str) -> int:
-    """Pick a chip font size by word length (varied-tag look from the factory)."""
+    """Pick a chip font size by word length (varied-tag look, carried over)."""
     length = len(word.strip())
     if length <= 3:
         return 72
@@ -156,7 +157,7 @@ def _size_for(word: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Word chunking (factory logic, unchanged)
+# Word chunking (scaffold logic, unchanged)
 # --------------------------------------------------------------------------- #
 
 

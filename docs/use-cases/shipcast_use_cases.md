@@ -1,7 +1,7 @@
 # Use Cases: shipcast Auto-Marketing Pipeline
 
 > Based on [PRD](../PRD.md) — All 17 sections, 101 FRs
-> Reference plan: `/Users/aleksei/.claude/plans/okay-so-currently-i-unified-canyon.md`
+> Reference plan: `docs/qa/shipcast_implementation_plan.md`
 
 This document is the authoritative source for E2E test scenarios. Use-case IDs (UC-N, UC-N-AN, UC-N-EN) are stable references mapped by `docs/qa/shipcast_test_cases.md`.
 
@@ -39,33 +39,33 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast pick ../getdeal-platform-monorepo --entry "Add CSV export"` (FR-1.1)
+1. Operator runs `shipcast pick ../example-project --entry "Add CSV export"` (FR-1.1)
 2. CLI validates platform is macOS or Linux (FR-1.31); proceeds
 3. CLI reads `input.yaml`; `InputYaml` Pydantic model validates all fields including `live_url` (https, non-RFC1918) and `repo_path` (under allowed root, contains `CHANGELOG.md`) (FR-2.1, FR-2.3, FR-2.4)
 4. CLI calls `Project.create`, copies `_template/`, writes `manifest.json` with all eleven stages `pending` and `config_snapshot` from `config.toml`; no API keys in `config_snapshot` (FR-1.1, FR-1.4, FR-1.11, FR-1.29)
 5. Dispatcher acquires `fcntl.flock(LOCK_EX|LOCK_NB)` on `projects/<slug>/.lock` (FR-1.30)
 6. Dispatcher transitions `01_pick` to `running`, calls `s01_pick.check_inputs()` (passes), calls `s01_pick.run()`: parses `CHANGELOG.md`, locates "Add CSV export" entry, writes `01_pick/entry.json` (FR-4.1–FR-4.4)
 7. Dispatcher computes `outputs_hash_at_done`, transitions to `done`, saves manifest, releases lock, prints Review Checklist (FR-1.20)
-8. Operator reviews `01_pick/entry.json`, runs `shipcast approve getdeal--csv-export 01_pick` (FR-1.14); `manually_edited=false` recorded
-9. Operator runs `shipcast enrich getdeal--csv-export`; dispatcher acquires lock, `s02_enrich.check_inputs()` confirms `01_pick` is done and approved; `run()` executes: `gh pr list` + `git log`, Playwright walkthrough of `live_url`, `gemini_client.multimodal()` call, `ba-analyst` sub-agent invocation; writes `02_enrich/context.json` (FR-5.1–FR-5.4)
+8. Operator reviews `01_pick/entry.json`, runs `shipcast approve example--csv-export 01_pick` (FR-1.14); `manually_edited=false` recorded
+9. Operator runs `shipcast enrich example--csv-export`; dispatcher acquires lock, `s02_enrich.check_inputs()` confirms `01_pick` is done and approved; `run()` executes: `gh pr list` + `git log`, Playwright walkthrough of `live_url`, `gemini_client.multimodal()` call, `ba-analyst` sub-agent invocation; writes `02_enrich/context.json` (FR-5.1–FR-5.4)
 10. Operator approves `02_enrich`
-11. Operator runs `shipcast brand getdeal--csv-export`; `s03_brand.check_inputs()` validates brand pack completeness (FR-3.3); `run()` calls `playwright_client.extract_css_palette()`, `extract_font_family()`, `screenshot_logo()`; calls `gemini_client.generate_image(aspect_ratio="1:1")` for `style_sheet.png`; writes `03_brand/proposal.json`, `logo.png`, `style_sheet.png` (FR-3.4–FR-3.8)
-12. Operator edits `03_brand/proposal.json` to reduce palette to exactly three hex codes (`primary`, `accent`, `neutral`) (FR-3.9); runs `shipcast approve getdeal--csv-export 03_brand`; dispatcher detects hash mismatch and records `manually_edited=true` (FR-3.10)
-13. Operator runs `shipcast plan getdeal--csv-export`; `s04_plan.run()` calls `planner` sub-agent then `brand-guardian` sub-agent sequentially; writes `04_plan/brief.json` with `video_beats` length=4, `carousel_beats` length=4, `has_stat_card`, `has_code_screenshot` flags (FR-6.1–FR-6.6)
+11. Operator runs `shipcast brand example--csv-export`; `s03_brand.check_inputs()` validates brand pack completeness (FR-3.3); `run()` calls `playwright_client.extract_css_palette()`, `extract_font_family()`, `screenshot_logo()`; calls `gemini_client.generate_image(aspect_ratio="1:1")` for `style_sheet.png`; writes `03_brand/proposal.json`, `logo.png`, `style_sheet.png` (FR-3.4–FR-3.8)
+12. Operator edits `03_brand/proposal.json` to reduce palette to exactly three hex codes (`primary`, `accent`, `neutral`) (FR-3.9); runs `shipcast approve example--csv-export 03_brand`; dispatcher detects hash mismatch and records `manually_edited=true` (FR-3.10)
+13. Operator runs `shipcast plan example--csv-export`; `s04_plan.run()` calls `planner` sub-agent then `brand-guardian` sub-agent sequentially; writes `04_plan/brief.json` with `video_beats` length=4, `carousel_beats` length=4, `has_stat_card`, `has_code_screenshot` flags (FR-6.1–FR-6.6)
 14. Operator approves `04_plan`
-15. Operator runs `shipcast script getdeal--csv-export`; `s05_script.run()` calls `demo-script-writer` sub-agent; writes `05_script/storyboard.json` with 4–6 beats (FR-7.1–FR-7.4)
+15. Operator runs `shipcast script example--csv-export`; `s05_script.run()` calls `demo-script-writer` sub-agent; writes `05_script/storyboard.json` with 4–6 beats (FR-7.1–FR-7.4)
 16. Operator approves `05_script`
-17. Operator runs `shipcast video_assets getdeal--csv-export`; standard mode: four beats, each rendered via `gemini_client.generate_image(aspect_ratio="9:16")` + `ffmpeg_client.ken_burns_clip()`; writes `06_video_assets/beat_00.mp4` through `beat_03.mp4` (FR-8.1, FR-8.2)
+17. Operator runs `shipcast video_assets example--csv-export`; standard mode: four beats, each rendered via `gemini_client.generate_image(aspect_ratio="9:16")` + `ffmpeg_client.ken_burns_clip()`; writes `06_video_assets/beat_00.mp4` through `beat_03.mp4` (FR-8.1, FR-8.2)
 18. Operator approves `06_video_assets`
-19. Operator runs `shipcast voice getdeal--csv-export`; `s07_voice.run()` joins narration lines, sends to ElevenLabs, runs WhisperX; writes `07_voice/narration.mp3` and `07_voice/words.json` (FR-9.1–FR-9.4)
+19. Operator runs `shipcast voice example--csv-export`; `s07_voice.run()` joins narration lines, sends to ElevenLabs, runs WhisperX; writes `07_voice/narration.mp3` and `07_voice/words.json` (FR-9.1–FR-9.4)
 20. Operator approves `07_voice`
-21. Operator runs `shipcast video getdeal--csv-export`; `s08_video.run()` calls `_assemble_raw()` (concat + narration + optional bgm), `_overlay_captions()` (chip mode by default), `_export_loop()`; writes `08_video/showcase.mp4`, `loop_6s.mp4`, `loop_6s.gif` (FR-10.1–FR-10.5)
+21. Operator runs `shipcast video example--csv-export`; `s08_video.run()` calls `_assemble_raw()` (concat + narration + optional bgm), `_overlay_captions()` (chip mode by default), `_export_loop()`; writes `08_video/showcase.mp4`, `loop_6s.mp4`, `loop_6s.gif` (FR-10.1–FR-10.5)
 22. Operator approves `08_video`
-23. Operator runs `shipcast graphics getdeal--csv-export`; `s09_graphics.run()` produces 4 aspect-ratio cards, OG card, conditional stat card and code screenshot, and LinkedIn carousel (6 slides) (FR-11.1–FR-11.9)
+23. Operator runs `shipcast graphics example--csv-export`; `s09_graphics.run()` produces 4 aspect-ratio cards, OG card, conditional stat card and code screenshot, and LinkedIn carousel (6 slides) (FR-11.1–FR-11.9)
 24. Operator approves `09_graphics`
-25. Operator runs `shipcast copy getdeal--csv-export`; `s10_copy.run()` calls `social-copywriter` sub-agent; writes `10_copy/twitter_thread.md`, `linkedin.md`, `blog.md` (FR-12.1–FR-12.5)
+25. Operator runs `shipcast copy example--csv-export`; `s10_copy.run()` calls `social-copywriter` sub-agent; writes `10_copy/twitter_thread.md`, `linkedin.md`, `blog.md` (FR-12.1–FR-12.5)
 26. Operator approves `10_copy`
-27. Operator runs `shipcast package getdeal--csv-export`; `s11_package.run()` assembles `release.zip` and writes `11_package/README.md`; calls `code-reviewer` sub-agent for README link sanity check (FR-13.1–FR-13.5)
+27. Operator runs `shipcast package example--csv-export`; `s11_package.run()` assembles `release.zip` and writes `11_package/README.md`; calls `code-reviewer` sub-agent for README link sanity check (FR-13.1–FR-13.5)
 28. Operator approves `11_package`; pipeline complete
 
 **Postconditions:**
@@ -107,7 +107,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast pick getdeal--csv-export` (FR-1.1)
+1. Operator runs `shipcast pick example--csv-export` (FR-1.1)
 2. Dispatcher loads project, acquires lock, initializes logging (FR-1.30, FR-1.33)
 3. Dispatcher transitions `01_pick` to `running`, saves manifest atomically (FR-1.8, FR-1.9)
 4. `s01_pick.check_inputs()` verifies `input.yaml` is present and readable; passes
@@ -162,7 +162,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast enrich getdeal--csv-export`
+1. Operator runs `shipcast enrich example--csv-export`
 2. Dispatcher acquires lock; `s02_enrich.check_inputs()` confirms `01_pick` done+approved and `01_pick/entry.json` exists (FR-1.24)
 3. `s02_enrich.run()` executes three sub-steps in sequence:
    a. `gh pr list --json` and `git log --stat` in `repo_path` → `pr_links: list[str]`, `diff_stats: dict`
@@ -211,7 +211,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast brand getdeal--csv-export`
+1. Operator runs `shipcast brand example--csv-export`
 2. `s03_brand.check_inputs()` verifies `02_enrich` done+approved; calls `additional_input_paths()` to verify brand pack files exist: `voice.md`, at least one `.ttf` in `fonts/`, `logo.svg` or `logo.png` (FR-3.3, FR-1.25)
 3. `s03_brand.run()`:
    a. Calls `InputYaml` URL validator on `live_url` before any Playwright call (FR-3.6)
@@ -222,7 +222,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
    f. Writes `03_brand/proposal.json` (`BrandProposal` schema: `palette`, `font_family`, `logo_detected`) (FR-3.8)
 4. Dispatcher computes `outputs_hash_at_done`, transitions to `done`, prints Review Checklist; exits 0
 5. Operator edits `03_brand/proposal.json`: reduces palette from 5 candidates to exactly 3 (`primary`, `accent`, `neutral`); optionally replaces `logo.png` or `style_sheet.png` (FR-3.9)
-6. Operator runs `shipcast approve getdeal--csv-export 03_brand`; dispatcher recomputes hash, detects mismatch, records `manually_edited=true`, lists changed files (FR-3.10)
+6. Operator runs `shipcast approve example--csv-export 03_brand`; dispatcher recomputes hash, detects mismatch, records `manually_edited=true`, lists changed files (FR-3.10)
 
 **Postconditions:**
 - `03_brand/proposal.json`, `03_brand/logo.png`, `03_brand/style_sheet.png` exist
@@ -268,7 +268,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast plan getdeal--csv-export`
+1. Operator runs `shipcast plan example--csv-export`
 2. `s04_plan.check_inputs()` verifies all three upstream stages done+approved; verifies their output files exist (FR-1.24)
 3. `s04_plan.run()`:
    a. Calls `planner` sub-agent via `claude -p` (300 s timeout) with `01_pick/entry.json` and `02_enrich/context.json` as context → draft `MarketingBrief` JSON (FR-6.1)
@@ -635,7 +635,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast approve getdeal--csv-export 01_pick`
+1. Operator runs `shipcast approve example--csv-export 01_pick`
 2. CLI loads manifest; reads `stages.01_pick.outputs` and `outputs_hash_at_done`
 3. CLI recomputes `compute_outputs_hash` over all output files (byte-content SHA-256) (FR-1.13)
 4. Current hash equals `outputs_hash_at_done` — no manual edits
@@ -666,7 +666,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 ### Primary Flow (Happy Path)
 
 1. Operator edits `03_brand/proposal.json` with correct palette (FR-3.9)
-2. Operator runs `shipcast approve getdeal--csv-export 03_brand`
+2. Operator runs `shipcast approve example--csv-export 03_brand`
 3. CLI recomputes `compute_outputs_hash`; value differs from `outputs_hash_at_done`
 4. CLI prints "Manual edits detected on N files" and lists each changed file (FR-1.15)
 5. `Manifest.approve()` sets `human_approved_at = utcnow()`, `manually_edited = true` (FR-1.15)
@@ -693,7 +693,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast script getdeal--csv-export --rerun`
+1. Operator runs `shipcast script example--csv-export --rerun`
 2. Dispatcher reads `stages.05_script.status = "done"` (FR-1.17)
 3. Dispatcher calls `Manifest.reset("05_script")` → transitions `done → pending`; clears all fields; resets downstream stages `06_video_assets` through `11_package` transitively
 4. Manifest saved atomically
@@ -726,7 +726,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path — Operator Confirms)
 
-1. Operator runs `shipcast brand getdeal--csv-export --rerun` when `04_plan` is approved
+1. Operator runs `shipcast brand example--csv-export --rerun` when `04_plan` is approved
 2. Dispatcher detects that downstream stage `04_plan` has `human_approved_at` non-null (FR-1.19)
 3. Dispatcher prints: "WARNING: This will discard the following approvals: [04_plan, 05_script, ...]"
 4. Without `--yes`, dispatcher prompts for confirmation (FR-1.19)
@@ -754,7 +754,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast reset getdeal--csv-export 05_script --yes` (FR-1.18)
+1. Operator runs `shipcast reset example--csv-export 05_script --yes` (FR-1.18)
 2. `--yes` bypasses confirmation prompt
 3. CLI reads `stages.05_script.outputs` list; deletes each output file from disk (FR-1.18)
 4. `Manifest.reset("05_script")` clears all fields (`status=pending`, `outputs=[]`, clears all hashes, timestamps, error); resets all downstream stages transitively (FR-1.18)
@@ -781,7 +781,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path)
 
-1. Operator runs `shipcast status getdeal--csv-export`
+1. Operator runs `shipcast status example--csv-export`
 2. CLI loads manifest; reads all eleven stage records (FR-1.2)
 3. CLI renders a `rich.Table` with eleven rows; each row: stage id, status (color-coded: pending=grey, running=yellow, done=green, failed=red, needs_review=cyan), approval indicator (FR-1.2)
 4. CLI exits 0; manifest unmodified; no lock acquired
@@ -845,7 +845,7 @@ This document is the authoritative source for E2E test scenarios. Use-case IDs (
 
 ### Primary Flow (Happy Path — Ack Set)
 
-1. Operator runs `SHIPCAST_NO_LOCK_ACK=1 shipcast pick getdeal--csv-export --no-lock` (FR-1.32)
+1. Operator runs `SHIPCAST_NO_LOCK_ACK=1 shipcast pick example--csv-export --no-lock` (FR-1.32)
 2. CLI detects `--no-lock` flag; checks `SHIPCAST_NO_LOCK_ACK=1` is set
 3. Dispatcher prints yellow warning banner (FR-1.32)
 4. Lock acquisition step is skipped; stage runs normally (UC-2 flow)
@@ -1137,7 +1137,7 @@ This table maps every PRD section and key FR/AC to the use cases that exercise i
 
 | PRD Section / FR | Description | Covered by UC(s) |
 |---|---|---|
-| **Section 1 — Factory Scaffold** | | |
+| **Section 1 — Core Scaffold** | | |
 | FR-1.1 | `shipcast pick` creates project, writes manifest, all stages pending | UC-1, UC-2 |
 | FR-1.2 | `shipcast status` renders 11-row color-coded table | UC-19 |
 | FR-1.3 | `shipcast --help` exits 0, lists 11 verbs; ≤1 s startup | UC-35 |

@@ -39,7 +39,7 @@ from shipcast.schemas import EnrichedContext
 
 runner = CliRunner()
 
-_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "getdeal_min"
+_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "repos" / "example_min"
 _CHANGELOG = (_FIXTURES / "CHANGELOG.md").read_text(encoding="utf-8")
 
 TINY_PNG = (
@@ -50,7 +50,7 @@ TINY_PNG = (
     b"\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
-SLUG = "getdeal-platform-monorepo--add-csv-export"
+SLUG = "example-project--add-csv-export"
 
 
 # --------------------------------------------------------------------------- #
@@ -75,7 +75,7 @@ def repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def target_repo(repo_root: Path) -> Path:
-    repo = repo_root / "getdeal-platform-monorepo"
+    repo = repo_root / "example-project"
     repo.mkdir()
     (repo / "CHANGELOG.md").write_text(_CHANGELOG, encoding="utf-8")
     return repo

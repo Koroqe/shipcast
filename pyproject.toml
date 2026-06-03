@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Slice 14 uses openai-whisper for word-level timestamps. Same Intel-Mac
-# constraints as 5-minute-library: torch < 2.3 for Intel-Mac wheels,
+# constraints as the upstream scaffold: torch < 2.3 for Intel-Mac wheels,
 # numba < 0.62 for llvmlite wheels, numpy < 2 for torch ABI.
 whisperx = [
     "openai-whisper>=20231117",

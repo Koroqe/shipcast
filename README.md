@@ -2,18 +2,16 @@
 
 Auto-marketing factory. Turns one `CHANGELOG.md` entry from any software project into a complete on-brand marketing package — showcase video, X thread, LinkedIn long-form post, blog post, and static graphics — through an 11-stage human-gated pipeline.
 
-Sibling project to [5-minute-library](../5-minute-library/). Reuses its proven CLI dispatcher + manifest + Stage protocol scaffold.
-
-Status: **v1 complete.** All 11 stages implemented and wired end-to-end (24 slices across 8 waves). Quality gates green — `mypy --strict`, `ruff`, 600 tests passing, `manifest.py` at 100% coverage, package overall at 91%. The real-API end-to-end smoke (against `getdeal-platform-monorepo`) is operator-driven — see [docs/qa/shipcast_e2e_runbook.md](docs/qa/shipcast_e2e_runbook.md).
+Status: **v1 complete.** All 11 stages implemented and wired end-to-end (24 slices across 8 waves). Quality gates green — `mypy --strict`, `ruff`, 600 tests passing, `manifest.py` at 100% coverage, package overall at 91%. The real-API end-to-end smoke is operator-driven — see [docs/qa/shipcast_e2e_runbook.md](docs/qa/shipcast_e2e_runbook.md).
 
 ## Quick start
 
 ```sh
 uv sync
 uv run shipcast --help
-uv run shipcast pick ../getdeal-platform-monorepo --entry "Add CSV export" --brand getdeal
+uv run shipcast pick ../example-project --entry "Add CSV export" --brand acme
 # ... operator approves at each of 11 gates ...
-open projects/getdeal--csv-export/11_package/release.zip
+open projects/example--csv-export/11_package/release.zip
 ```
 
 ## Pipeline (11 stages)
@@ -78,4 +76,4 @@ Coverage gates: `shipcast.manifest` 100%, package overall ≥ 90%.
 
 ## Plan
 
-See `/Users/aleksei/.claude/plans/okay-so-currently-i-unified-canyon.md` for the full implementation plan (24 slices across 8 waves).
+See `docs/qa/shipcast_implementation_plan.md` for the full implementation plan (24 slices across 8 waves).

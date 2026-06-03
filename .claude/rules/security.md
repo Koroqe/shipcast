@@ -47,7 +47,7 @@ Slice 3 enforces in `InputYaml` Pydantic schema:
 
 - All shipcast artifacts are confined to `projects/<slug>/`. Stages MUST NOT write outside their declared `stage_dir`.
 - `Project.create` validates the slug is a safe directory name (alphanumeric, hyphens, underscores) before any filesystem write.
-- shipcast NEVER writes into the target software project (e.g. `getdeal-platform-monorepo/`). It reads `CHANGELOG.md` and runs `gh` / `git log` in that directory, but never modifies it. CHANGELOG-missing → error, NEVER auto-create.
+- shipcast NEVER writes into the target software project (e.g. `example-project/`). It reads `CHANGELOG.md` and runs `gh` / `git log` in that directory, but never modifies it. CHANGELOG-missing → error, NEVER auto-create.
 
 ## Pre-review checkpoints
 

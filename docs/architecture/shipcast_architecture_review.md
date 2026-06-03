@@ -2,13 +2,13 @@
 
 **Reviewer:** Software Architect
 **Date:** 2026-06-03
-**Scope reviewed:** `docs/PRD.md` (17 sections, 101 FRs), `docs/use-cases/shipcast_use_cases.md` (36 UCs), the binding reference plan `okay-so-currently-i-unified-canyon.md` (24 slices), project invariants (`.claude/CLAUDE.md`, `.claude/rules/{architecture,testing,security}.md`), the on-disk scaffold (`src/shipcast/` skeleton, `pyproject.toml`, `config.toml`, `.env.example`, `projects/_template/`), and the reference sibling `5-minute-library/src/factory/`.
+**Scope reviewed:** `docs/PRD.md` (17 sections, 101 FRs), `docs/use-cases/shipcast_use_cases.md` (36 UCs), the binding reference plan `docs/qa/shipcast_implementation_plan.md` (24 slices), project invariants (`.claude/CLAUDE.md`, `.claude/rules/{architecture,testing,security}.md`), the on-disk scaffold (`src/shipcast/` skeleton, `pyproject.toml`, `config.toml`, `.env.example`, `projects/_template/`), and the proven upstream pipeline scaffold it reuses.
 
 ---
 
 ## Verdict: **PASS** (with conditions)
 
-The planned architecture is sound and faithfully reuses the battle-hardened `5-minute-library` factory. All hard invariants in `.claude/rules/architecture.md` and `security.md` are respected by the layout. The reuse/copy/extend claims in the reference plan were verified against the actual sibling code and are realistic. No CRITICAL findings. Three MAJOR findings require correction during the relevant slices before those slices can be considered done; they are spec/wiring gaps, not structural-boundary violations. The conditions are enumerated in Action Items.
+The planned architecture is sound and faithfully reuses a battle-hardened upstream pipeline scaffold. All hard invariants in `.claude/rules/architecture.md` and `security.md` are respected by the layout. The reuse/copy/extend claims in the reference plan were verified against the actual scaffold code and are realistic. No CRITICAL findings. Three MAJOR findings require correction during the relevant slices before those slices can be considered done; they are spec/wiring gaps, not structural-boundary violations. The conditions are enumerated in Action Items.
 
 **REST conventions:** N/A. shipcast is a Typer CLI with no HTTP API and no database. There are no endpoints, no auth middleware, and no network surface other than outbound calls to external SaaS APIs (validated for SSRF on the Playwright `live_url` path only). This is noted explicitly so the absence of REST/API findings is not mistaken for an omission.
 
@@ -16,7 +16,7 @@ The planned architecture is sound and faithfully reuses the battle-hardened `5-m
 
 ## Validated Invariants
 
-- **Layering — cli is the only manifest mutator.** Confirmed in `5-minute-library/src/factory/cli.py`: the dispatcher owns `transition`, `save_manifest`, `approve`, lock acquisition, `compute_outputs_hash`, and the Review Checklist. `manifest.py` exposes pure state-transition methods that return new `Manifest` copies; it performs no I/O except `load`/`save`. Satisfies `architecture.md` "Layering" and FR-1.20.
+- **Layering — cli is the only manifest mutator.** Confirmed in the upstream scaffold's `cli.py`: the dispatcher owns `transition`, `save_manifest`, `approve`, lock acquisition, `compute_outputs_hash`, and the Review Checklist. `manifest.py` exposes pure state-transition methods that return new `Manifest` copies; it performs no I/O except `load`/`save`. Satisfies `architecture.md` "Layering" and FR-1.20.
 - **Layering — stages do not import cli; clients do not import manifest; schemas import nothing under the package.** The reused `stage.py`/`_base.py` import only `manifest` (for `StageStatus`/`compute_inputs_hash`) and `errors`; `gemini_client.py` imports only `config`/`errors`, never `manifest`. The planned `schemas.py` is a leaf Pydantic module. Satisfies `architecture.md` final layering paragraph.
 - **Manifest single source of truth, no sidecars.** FR-1.4 and the layout in the plan write only `manifest.json`; per-stage artifacts are data files, not status files. Satisfies `architecture.md` "Manifest is single source of truth."
 - **Atomic temp-rename writes.** `manifest.py:save` serializes to `<path>.tmp`, `os.fsync`, then `os.replace`. Satisfies FR-1.9 / NFR-16.7 / AC-1.13.

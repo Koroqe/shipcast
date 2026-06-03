@@ -2,7 +2,7 @@
 
 > Based on [PRD](../PRD.md) and [Use Cases](../use-cases/shipcast_use_cases.md)
 > Architecture review: [shipcast_architecture_review.md](../architecture/shipcast_architecture_review.md)
-> Reference plan: `/Users/aleksei/.claude/plans/okay-so-currently-i-unified-canyon.md`
+> Reference plan: `docs/qa/shipcast_implementation_plan.md`
 
 ---
 

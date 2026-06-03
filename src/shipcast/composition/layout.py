@@ -1,6 +1,6 @@
 """Pure PIL layout helpers - text outlining + 8-point-grid spacing.
 
-Vendored and adapted from ``5-minute-library/scripts/build_outro.py`` (the
+Vendored and adapted from the upstream pipeline scaffold's outro-builder (the
 ``draw_outlined`` helper) plus the project's Visual-style contract (8-point
 grid, >= 8 % padding on every static graphic).
 
