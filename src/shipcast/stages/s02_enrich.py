@@ -63,6 +63,7 @@ from shipcast.manifest import StageStatus, dump_json_canonical
 from shipcast.schemas import EnrichedContext, InputYaml
 from shipcast.stage import StageResult
 from shipcast.stages._base import BaseStage
+from shipcast.subagent_json import extract_json_object
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -341,7 +342,7 @@ class EnrichStage(BaseStage):
             raise SubagentFailed("ba-analyst", result.returncode, result.stderr or "")
 
         try:
-            parsed = json.loads(result.stdout)
+            parsed = json.loads(extract_json_object(result.stdout))
         except json.JSONDecodeError as exc:
             raise SubagentMalformedOutput(
                 f"ba-analyst stdout was not valid JSON: {exc}"

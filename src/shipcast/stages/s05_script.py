@@ -51,6 +51,7 @@ from shipcast.manifest import StageStatus, dump_json_canonical
 from shipcast.schemas import Storyboard
 from shipcast.stage import StageResult
 from shipcast.stages._base import BaseStage
+from shipcast.subagent_json import extract_json_object
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -141,7 +142,7 @@ class ScriptStage(BaseStage):
             raise SubagentFailed(agent, result.returncode, result.stderr or "")
 
         try:
-            parsed = json.loads(result.stdout)
+            parsed = json.loads(extract_json_object(result.stdout))
         except json.JSONDecodeError as exc:
             raise SubagentMalformedOutput(
                 f"{agent} stdout was not valid JSON: {exc}"
