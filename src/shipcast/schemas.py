@@ -757,6 +757,48 @@ class CopyBundle(BaseModel):
         return v
 
 
+class AssetEntry(BaseModel):
+    """One row of the ``11_package`` release manifest / README asset table.
+
+    Each entry describes a single marketing asset bundled into ``release.zip``:
+    its ``arcname`` (the path inside the ZIP, e.g. ``09_graphics/16x9.png`` or
+    ``08_video/showcase.mp4``), human-readable ``dimensions`` (``"1920x1080"``
+    for images/video, ``"—"`` for text), and ``aspect`` ratio token
+    (``"16:9"``, ``"1:1"``, ``"—"`` for text). The README renders these as a
+    Markdown table (FR-13.2 — one row per asset, with dimensions + aspect).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    arcname: str
+    dimensions: str
+    aspect: str
+
+
+class PackageManifest(BaseModel):
+    """The structured description of a ``11_package`` release (FR-13.1 .. FR-13.4).
+
+    ``s11_package`` does NOT serialize this model to disk — its on-disk outputs
+    are ``release.zip`` + ``README.md`` — but it builds a ``PackageManifest``
+    in memory to drive deterministic ZIP membership and README rendering, and
+    declares it as ``output_schema`` so the stage Protocol contract is honored.
+
+    Fields:
+
+    * ``assets`` — every file bundled into ``release.zip`` (≥ 1), sorted by
+      ``arcname`` for byte-stable ZIP membership (FR-13.3) and a stable asset
+      table. Conditional ``stat_*.png`` / ``code.png`` appear here only when the
+      upstream ``09_graphics`` stage actually produced them (FR-13.4).
+    * ``channels`` — the copy channels whose paste-ready text becomes a fenced
+      README code block, in write order (``x`` / ``linkedin`` / ``blog``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    assets: list[AssetEntry]
+    channels: list[str]
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
