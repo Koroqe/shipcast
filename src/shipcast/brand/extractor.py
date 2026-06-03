@@ -105,7 +105,11 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
         return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
     def _saturation(rgb: tuple[int, int, int]) -> float:
-        _h, _l, s = colorsys.rgb_to_hls(
+        # HSV saturation, NOT HLS: HLS reports near-white/near-black as fully
+        # saturated (its S blows up near the lightness extremes), so a near-white
+        # background was wrongly picked as the most "vivid" primary. HSV's
+        # S = (max-min)/max ranks chromatic colours high and near-white/black low.
+        _h, s, _v = colorsys.rgb_to_hsv(
             rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0
         )
         return s
