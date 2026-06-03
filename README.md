@@ -4,9 +4,9 @@ Auto-marketing factory. Turns one `CHANGELOG.md` entry from any software project
 
 Sibling project to [5-minute-library](../5-minute-library/). Reuses its proven CLI dispatcher + manifest + Stage protocol scaffold.
 
-Status: scaffold only. The full implementation plan lives at `/Users/aleksei/.claude/plans/okay-so-currently-i-unified-canyon.md`. Documentation pipeline (PRD → use cases → architecture → QA test cases → planner) runs next via `/bootstrap-feature`.
+Status: **v1 complete.** All 11 stages implemented and wired end-to-end (24 slices across 8 waves). Quality gates green — `mypy --strict`, `ruff`, 600 tests passing, `manifest.py` at 100% coverage, package overall at 91%. The real-API end-to-end smoke (against `getdeal-platform-monorepo`) is operator-driven — see [docs/qa/shipcast_e2e_runbook.md](docs/qa/shipcast_e2e_runbook.md).
 
-## Quick start (once implementation lands)
+## Quick start
 
 ```sh
 uv sync
