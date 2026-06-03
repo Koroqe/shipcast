@@ -314,12 +314,16 @@ class EnrichStage(BaseStage):
             SubagentMalformedOutput: stdout was not valid JSON.
         """
         try:
+            # Plain `claude -p` (default agent) for this bounded one-shot
+            # framing call. The stock `ba-analyst` agent is a use-case-doc
+            # writer whose system prompt drives it to explore the repo and emit
+            # markdown — it over-works a one-shot JSON task and blows the
+            # timeout. The framing prompt is fully self-contained, so a plain
+            # call is the right-sized tool.
             result = self._subprocess_run(
                 [
                     "claude",
                     "-p",
-                    "--agent",
-                    "ba-analyst",
                     "--output-format",
                     "text",
                     prompt,
@@ -372,8 +376,10 @@ class EnrichStage(BaseStage):
     @staticmethod
     def _build_ba_prompt(entry: dict[str, object]) -> str:
         return (
-            "Provide high-level marketing framing for this changelog entry as a "
-            "JSON object.\n"
+            "Provide high-level marketing framing for this changelog entry. "
+            "Respond with ONLY a single compact JSON object (no markdown, no "
+            "prose, no code fence). Do NOT read files, use tools, or write "
+            "anything — answer purely from the text below.\n"
             f"Entry name: {entry.get('name', '')}\n"
             f"Summary: {entry.get('summary', '')}\n"
             f"Details: {entry.get('details', '')}"

@@ -103,46 +103,52 @@ class PlanStage(BaseStage):
         return path.read_text(encoding="utf-8")
 
     # ------------------------------------------------------------- sub-agents
-    def _invoke_subagent(self, agent: str, prompt: str) -> dict[str, object]:
-        """Run one ``claude -p --agent <agent>`` call and parse its JSON stdout.
+    def _invoke_subagent(
+        self, agent: str | None, prompt: str, *, label: str | None = None
+    ) -> dict[str, object]:
+        """Run one ``claude -p`` call and parse its JSON stdout.
+
+        When ``agent`` is a name, the call is ``claude -p --agent <agent>``
+        (used for the tailored shipcast agents). When ``agent`` is ``None``,
+        a plain ``claude -p`` (default agent) is used — the right-sized tool
+        for a bounded, self-contained one-shot JSON call such as the planner
+        draft, where the stock ``planner`` agent would over-work and time out.
+        ``label`` names the call in errors when ``agent`` is ``None``.
 
         Raises:
             SubagentTimeout: the subprocess exceeded the 300 s budget.
             SubagentFailed: the subprocess exited non-zero (stderr captured).
             SubagentMalformedOutput: stdout was not a JSON object.
         """
+        who = agent or label or "subagent"
+        cmd = ["claude", "-p"]
+        if agent is not None:
+            cmd += ["--agent", agent]
+        cmd += ["--output-format", "text", prompt]
         try:
             result = self._subprocess_run(
-                [
-                    "claude",
-                    "-p",
-                    "--agent",
-                    agent,
-                    "--output-format",
-                    "text",
-                    prompt,
-                ],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=_SUBAGENT_TIMEOUT_SEC,
             )
         except subprocess.TimeoutExpired as exc:
             raise SubagentTimeout(
-                f"{agent} exceeded {_SUBAGENT_TIMEOUT_SEC}s timeout"
+                f"{who} exceeded {_SUBAGENT_TIMEOUT_SEC}s timeout"
             ) from exc
 
         if result.returncode != 0:
-            raise SubagentFailed(agent, result.returncode, result.stderr or "")
+            raise SubagentFailed(who, result.returncode, result.stderr or "")
 
         try:
             parsed = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             raise SubagentMalformedOutput(
-                f"{agent} stdout was not valid JSON: {exc}"
+                f"{who} stdout was not valid JSON: {exc}"
             ) from exc
         if not isinstance(parsed, dict):
             raise SubagentMalformedOutput(
-                f"{agent} JSON must be an object, got {type(parsed).__name__}"
+                f"{who} JSON must be an object, got {type(parsed).__name__}"
             )
         return parsed
 
@@ -154,7 +160,10 @@ class PlanStage(BaseStage):
         """Assemble the deterministic planner prompt (no wall-clock / random)."""
         return (
             "Draft a marketing brief for this changelog entry as a single JSON "
-            "object matching the MarketingBrief schema.\n\n"
+            "object matching the MarketingBrief schema. Respond with ONLY the "
+            "JSON object (no markdown, no prose, no code fence). Do NOT read "
+            "files, use tools, or write anything — answer purely from the "
+            "context below.\n\n"
             "Required keys: hook_template_per_channel (an object with x, "
             "linkedin, blog; each value one of: we_just_shipped, before_after, "
             "problem_aha, numbered_list, behind_the_scenes, 5_sec_value, "
@@ -194,10 +203,12 @@ class PlanStage(BaseStage):
         voice_md = self._read_text(project, self.VOICE_REL)
         proposal_json = self._read_text(project, self.PROPOSAL_REL)
 
-        # 1. planner drafts the brief.
+        # 1. planner drafts the brief — plain `claude -p` (the stock `planner`
+        #    agent over-works a one-shot self-contained JSON task and times out).
         draft = self._invoke_subagent(
-            "planner",
+            None,
             self._build_planner_prompt(entry_json, context_json, voice_md),
+            label="planner",
         )
 
         # 2. brand-guardian guards the draft; ITS output is final (TC-7.3).

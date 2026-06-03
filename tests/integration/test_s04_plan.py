@@ -241,7 +241,9 @@ def _install_plan_subprocess(
     def _fake_run(cmd: list[str], *a: Any, **k: Any) -> Any:
         calls(cmd)
         assert cmd[0] == "claude", f"unexpected subprocess: {cmd!r}"
-        agent = cmd[cmd.index("--agent") + 1]
+        # planner runs as a plain `claude -p` (no --agent); brand-guardian
+        # keeps its tailored `--agent brand-guardian`.
+        agent = cmd[cmd.index("--agent") + 1] if "--agent" in cmd else "planner"
         if agent == "planner":
             if planner_timeout:
                 raise subprocess.TimeoutExpired(cmd, timeout=300)
@@ -296,11 +298,12 @@ def test_tc_7_1_happy_path(
     assert m.stages["04_plan"].status == StageStatus.DONE
     assert "04_plan/brief.json" in m.stages["04_plan"].outputs
 
-    # Chained, sequential: planner first, guardian second (exactly two calls).
+    # Chained, sequential: planner first (plain `claude -p`, no --agent),
+    # guardian second (tailored `--agent brand-guardian`) — exactly two calls.
     assert calls.call_count == 2
     first_cmd = calls.call_args_list[0].args[0]
     second_cmd = calls.call_args_list[1].args[0]
-    assert "planner" in first_cmd
+    assert "--agent" not in first_cmd
     assert "brand-guardian" in second_cmd
 
 

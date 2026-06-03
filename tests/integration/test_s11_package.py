@@ -307,12 +307,15 @@ def test_tc_14_5_code_reviewer_timeout_fails(tmp_path: Path) -> None:
     assert not (pkg_dir / "README.md").exists()
 
 
-def test_code_reviewer_invoked_with_claude_agent(tmp_path: Path) -> None:
+def test_readme_review_invoked_via_claude(tmp_path: Path) -> None:
     project = _build_project(tmp_path)
     calls = _ok_subprocess()
     _stage(calls).run(project)
-    # The optional code-reviewer claude -p call was made.
+    # The README sanity-check `claude -p` call was made. It is a plain
+    # (default-agent) call — the stock `code-reviewer` agent over-works a
+    # one-shot README review and times out, so it is not used here.
     assert calls.call_count == 1
     cmd = calls.call_args[0][0]
     assert cmd[0] == "claude"
-    assert "code-reviewer" in cmd
+    assert "-p" in cmd
+    assert "--agent" not in cmd

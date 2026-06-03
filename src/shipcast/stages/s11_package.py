@@ -264,16 +264,18 @@ class PackageStage(BaseStage):
         """
         prompt = (
             "Sanity-check this release README for broken paste-blocks or links. "
-            "Report any obvious problems.\n\n"
+            "Report any obvious problems in one short paragraph. Do NOT read "
+            "files, use tools, or write anything — review only the text below.\n\n"
             f"{readme_path.read_text(encoding='utf-8')}"
         )
         try:
+            # Plain `claude -p` (default agent) for this bounded one-shot text
+            # review. The stock `code-reviewer` agent explores the repo and
+            # over-works a one-shot README check, blowing the timeout.
             result = self._subprocess_run(
                 [
                     "claude",
                     "-p",
-                    "--agent",
-                    "code-reviewer",
                     "--output-format",
                     "text",
                     prompt,
