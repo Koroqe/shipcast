@@ -149,9 +149,6 @@ class BrandStage(BaseStage):
     STYLE_SHEET_FILENAME: ClassVar[str] = "style_sheet.png"
     VOICE_FILENAME: ClassVar[str] = "voice.md"
 
-    #: The image model used for the 1:1 style sheet. Stage-local constant so the
-    #: stage does not depend on Settings field names beyond the api key.
-    STYLE_SHEET_MODEL: ClassVar[str] = "gemini-2.5-flash-image-preview"
 
     def __init__(
         self,
@@ -381,7 +378,7 @@ class BrandStage(BaseStage):
         prompt = self._style_sheet_prompt(palette)
         image_bytes = clients.gemini.generate_image(
             prompt,
-            model=self.STYLE_SHEET_MODEL,
+            model=project.settings.gemini_image_model,
             seed=0,
             aspect_ratio="1:1",
         )
