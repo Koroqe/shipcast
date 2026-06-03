@@ -139,9 +139,14 @@ def test_generate_image_dimensions_per_ratio(
     img = Image.open(io.BytesIO(out))
     assert img.size == expected
 
-    # The request payload carried the same dimensions through to Gemini.
+    # The request payload carries a VALID scalar aspectRatio token (no
+    # imageSize object — the API rejects that); the stage PIL-normalises to
+    # the canonical dims afterwards.
+    from shipcast.clients.gemini_client import _GEMINI_ASPECT_TOKEN
+
     image_config = _captured_image_config(post)
-    assert image_config["imageSize"] == {"width": width, "height": height}
+    assert image_config["aspectRatio"] == _GEMINI_ASPECT_TOKEN[aspect_ratio]
+    assert "imageSize" not in image_config
 
     # API key never leaks into the request body.
     assert SENTINEL_KEY not in post.call_args.kwargs["data"].decode("utf-8")
@@ -168,7 +173,8 @@ def test_generate_image_default_is_16x9(monkeypatch: pytest.MonkeyPatch) -> None
     assert img.size == (1920, 1080)
 
     image_config = _captured_image_config(post)
-    assert image_config["imageSize"] == {"width": 1920, "height": 1080}
+    assert image_config["aspectRatio"] == "16:9"
+    assert "imageSize" not in image_config
 
 
 def test_generate_image_explicit_16x9_matches_default(
@@ -217,10 +223,8 @@ def test_generate_image_reference_bytes_with_aspect_ratio(
     parts = body["contents"][0]["parts"]
     assert parts[0] == {"text": "conditioned shot"}
     assert parts[1]["inline_data"]["mime_type"] == "image/png"
-    assert body["generationConfig"]["imageConfig"]["imageSize"] == {
-        "width": 1080,
-        "height": 1920,
-    }
+    assert body["generationConfig"]["imageConfig"]["aspectRatio"] == "9:16"
+    assert "imageSize" not in body["generationConfig"]["imageConfig"]
 
 
 # --------------------------------------------------------------------------- #

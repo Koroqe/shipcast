@@ -78,6 +78,21 @@ ASPECT_RATIO_DIMENSIONS: Final[dict[AspectRatio, tuple[int, int]]] = {
     "og": (1200, 630),
 }
 
+#: Map each shipcast aspect to a VALID Gemini ``imageConfig.aspectRatio`` token.
+#: The Gemini image API only accepts a fixed enum (1:1, 3:4, 4:3, 9:16, 16:9)
+#: as a SCALAR — it rejects an ``imageSize`` object and arbitrary tokens like
+#: ``4:5``/``og``. We request the closest supported token; ``s09_graphics``
+#: then PIL-normalises the returned still to the exact canonical pixel
+#: dimensions above, so the small ratio mismatch (4:5->3:4, og->16:9) is
+#: corrected downstream.
+_GEMINI_ASPECT_TOKEN: Final[dict[AspectRatio, str]] = {
+    "1:1": "1:1",
+    "16:9": "16:9",
+    "9:16": "9:16",
+    "4:5": "3:4",
+    "og": "16:9",
+}
+
 #: Default aspect ratio for `generate_image`. Kept at 16:9 so existing callers
 #: that omit ``aspect_ratio`` retain the prior behaviour.
 _DEFAULT_ASPECT_RATIO: Final[AspectRatio] = "16:9"
@@ -141,15 +156,16 @@ class GeminiClient:
                     }
                 }
             )
-        width, height = ASPECT_RATIO_DIMENSIONS[aspect_ratio]
         body = {
             "contents": [{"parts": parts}],
             "generationConfig": {
                 "seed": seed,
                 "responseModalities": ["IMAGE"],
+                # imageConfig.aspectRatio is a SCALAR enum token; an imageSize
+                # object is rejected by the API. The stage resizes to exact
+                # canonical dims (ASPECT_RATIO_DIMENSIONS) afterwards.
                 "imageConfig": {
-                    "aspectRatio": aspect_ratio,
-                    "imageSize": {"width": width, "height": height},
+                    "aspectRatio": _GEMINI_ASPECT_TOKEN[aspect_ratio],
                 },
             },
         }
