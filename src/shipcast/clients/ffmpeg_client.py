@@ -418,6 +418,34 @@ def probe_video(path: Path) -> ProbeResult:
     )
 
 
+def probe_audio_duration_sec(path: Path) -> float | None:
+    """Return the container duration (seconds) of an audio file via one ffprobe.
+
+    Unlike :func:`probe_video`, this does NOT select a video stream — it reads
+    only the format-level ``duration``, so it works on audio-only files such as
+    ``07_voice/narration.mp3``. Returns ``None`` when ffprobe reports no usable
+    duration (the caller decides how to handle it).
+    """
+    argv = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(path),
+    ]
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    value = result.stdout.strip()
+    if value in ("", "N/A"):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def _build_argv(
     *,
     concat_path: Path,

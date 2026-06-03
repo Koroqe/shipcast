@@ -156,6 +156,19 @@ class MissingApiKey(ShipcastError):
     """
 
 
+class ElevenLabsQuotaExceeded(ShipcastError):
+    """ElevenLabs returned an HTTP 429 / character-quota-exhausted error.
+
+    Raised by ``ElevenLabsClient.synthesize_speech`` (Slice 14) when the
+    text-to-speech call is rejected for quota (HTTP 429). A HARD failure for
+    ``s07_voice``: the stage aborts BEFORE writing ``narration.mp3`` or
+    ``words.json`` (UC-9-E1 / FR-9.5), so the operator waits for the quota
+    window to reset and reruns. Surfaces through the dispatcher's FAILED
+    transition with ``error.type == "ElevenLabsQuotaExceeded"``. The message
+    carries only a short status note — never the narration text.
+    """
+
+
 class GeminiTransientError(ShipcastError):
     """Gemini AI Studio returned a transient HTTP failure (429/500/502/503/504).
 

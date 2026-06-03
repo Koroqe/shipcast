@@ -22,7 +22,10 @@ from typing import Any
 import elevenlabs
 from pydantic import SecretStr
 
-from shipcast.errors import MissingApiKey
+from shipcast.errors import ElevenLabsQuotaExceeded, MissingApiKey
+
+#: HTTP status the ElevenLabs API returns when the character quota is exhausted.
+_QUOTA_STATUS: int = 429
 
 
 class ElevenLabsClient:
@@ -85,7 +88,11 @@ class ElevenLabsClient:
             `output_path` (same value passed in, for caller convenience).
 
         Raises:
-            elevenlabs.core.ApiError: any HTTP error (401, 422, 429, 402, etc.).
+            ElevenLabsQuotaExceeded: HTTP 429 (character quota exhausted). The
+                stage treats this as a HARD failure and writes no files
+                (FR-9.5). The message names the quota status only — never the
+                narration text.
+            elevenlabs.core.ApiError: any OTHER HTTP error (401, 422, 402, etc.).
                 Propagates unchanged (FR-3.9 — no retry, no wrapping).
             elevenlabs.core.UnauthorizedError: 401 specifically (subclass of ApiError).
             httpx.ConnectError / httpx.TimeoutException: network failures.
@@ -103,8 +110,19 @@ class ElevenLabsClient:
         }
         if voice_settings is not None:
             convert_kwargs["voice_settings"] = voice_settings
-        audio_iter = sdk.text_to_speech.convert(**convert_kwargs)
-        audio_bytes = b"".join(audio_iter)
+        try:
+            audio_iter = sdk.text_to_speech.convert(**convert_kwargs)
+            audio_bytes = b"".join(audio_iter)
+        except elevenlabs.core.ApiError as exc:
+            # An HTTP 429 means the operator's character quota is exhausted.
+            # Surface a typed quota error so the stage fails cleanly without
+            # writing any partial artifact, and never echo the narration text.
+            if getattr(exc, "status_code", None) == _QUOTA_STATUS:
+                raise ElevenLabsQuotaExceeded(
+                    "ElevenLabs character quota exhausted (HTTP 429); "
+                    "wait for the quota window to reset and rerun."
+                ) from exc
+            raise
 
         tmp_path = output_path.with_suffix(".mp3.tmp")
         tmp_path.write_bytes(audio_bytes)
