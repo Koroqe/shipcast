@@ -312,8 +312,8 @@ def _install_copy_subprocess(
     def _fake_run(cmd: list[str], *a: Any, **k: Any) -> Any:
         calls(cmd)
         assert cmd[0] == "claude", f"unexpected subprocess: {cmd!r}"
-        agent = cmd[cmd.index("--agent") + 1]
-        assert agent == "social-copywriter", f"unexpected agent: {agent!r}"
+        # Plain `claude -p` (no --agent) — the copy call uses the default agent.
+        assert "--agent" not in cmd
         if timeout:
             raise subprocess.TimeoutExpired(cmd, timeout=300)
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)

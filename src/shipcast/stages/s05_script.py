@@ -105,7 +105,14 @@ class ScriptStage(BaseStage):
 
     # ------------------------------------------------------------- sub-agent
     def _invoke_subagent(self, agent: str, prompt: str) -> dict[str, object]:
-        """Run one ``claude -p --agent <agent>`` call and parse its JSON stdout.
+        """Run one ``claude -p`` call and parse its JSON stdout.
+
+        Uses a plain (default-agent) ``claude -p``: the tailored
+        ``demo-script-writer`` agent has Write/Edit tools and tends to WRITE a
+        file under ``claude -p`` instead of printing JSON to stdout (empty
+        stdout → malformed-output). The prompt is fully self-contained, so a
+        plain call returning JSON on stdout is the reliable shape. ``agent`` is
+        retained only as the error label.
 
         Raises:
             SubagentTimeout: the subprocess exceeded the 300 s budget.
@@ -117,8 +124,6 @@ class ScriptStage(BaseStage):
                 [
                     "claude",
                     "-p",
-                    "--agent",
-                    agent,
                     "--output-format",
                     "text",
                     prompt,
@@ -153,7 +158,10 @@ class ScriptStage(BaseStage):
         """Assemble the deterministic demo-script-writer prompt."""
         return (
             "Draft the showcase storyboard for this changelog entry as a single "
-            "JSON object matching the Storyboard schema.\n\n"
+            "JSON object matching the Storyboard schema. Print ONLY the JSON "
+            "object to stdout (no markdown, no prose, no code fence). Do NOT "
+            "use the Write/Edit tools, create files, or read files — answer "
+            "purely from the context below.\n\n"
             "The object MUST have exactly one key, `beats`: an array of 4-6 "
             "objects, each with image_prompt (str), narration (str), and "
             "duration_sec (a number between 3 and 5 inclusive). Build on the "

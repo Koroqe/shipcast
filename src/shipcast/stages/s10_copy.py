@@ -139,12 +139,15 @@ class CopyStage(BaseStage):
             SubagentMalformedOutput: stdout was not a JSON object.
         """
         try:
+            # Plain `claude -p` (default agent): the tailored social-copywriter
+            # agent has Write/Edit tools and tends to WRITE files under
+            # `claude -p` instead of printing JSON to stdout. The prompt is
+            # self-contained, so a plain stdout-JSON call is the reliable shape.
+            # `agent` is retained only as the error label.
             result = self._subprocess_run(
                 [
                     "claude",
                     "-p",
-                    "--agent",
-                    agent,
                     "--output-format",
                     "text",
                     prompt,
@@ -181,7 +184,10 @@ class CopyStage(BaseStage):
         """Assemble the deterministic social-copywriter prompt."""
         return (
             "Write the three marketing-copy artifacts for this changelog entry as "
-            "a single JSON object matching the CopyBundle schema.\n\n"
+            "a single JSON object matching the CopyBundle schema. Print ONLY the "
+            "JSON object to stdout (no surrounding prose or code fence). Do NOT "
+            "use the Write/Edit tools or create files — answer purely from the "
+            "context below.\n\n"
             "Required keys (each a non-empty string):\n"
             "- twitter_thread: 3-8 numbered tweets, one per line ('1/ ...'), each "
             "line <= 280 chars; Unicode mathematical bold for emphasis, NEVER "

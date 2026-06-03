@@ -249,8 +249,8 @@ def _install_script_subprocess(
     def _fake_run(cmd: list[str], *a: Any, **k: Any) -> Any:
         calls(cmd)
         assert cmd[0] == "claude", f"unexpected subprocess: {cmd!r}"
-        agent = cmd[cmd.index("--agent") + 1]
-        assert agent == "demo-script-writer", f"unexpected agent: {agent!r}"
+        # Plain `claude -p` (no --agent) — the script call uses the default agent.
+        assert "--agent" not in cmd
         if timeout:
             raise subprocess.TimeoutExpired(cmd, timeout=300)
         return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
@@ -293,9 +293,9 @@ def test_tc_8_1_happy_path_four_beats(
     assert m.stages["05_script"].status == StageStatus.DONE
     assert "05_script/storyboard.json" in m.stages["05_script"].outputs
 
-    # Exactly one demo-script-writer call.
+    # Exactly one storyboard call — plain `claude -p` (default agent, no --agent).
     assert calls.call_count == 1
-    assert "demo-script-writer" in calls.call_args_list[0].args[0]
+    assert "--agent" not in calls.call_args_list[0].args[0]
 
 
 # --------------------------------------------------------------------------- #
