@@ -105,7 +105,62 @@ def test_brand_guardian_snapshot_rejects_bad_length() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Agent file existence + frontmatter (TC-7.8 / AC-6.3)
+# demo-script-writer (Slice 12, TC-8.8 / TC-22.5)
+# --------------------------------------------------------------------------- #
+
+import shipcast.stages.s05_script as script_mod  # noqa: E402
+from shipcast.schemas import Storyboard  # noqa: E402
+
+#: Pinned demo-script-writer stdout: a conformant 4-beat Storyboard JSON object.
+_SCRIPT_SNAPSHOT: dict[str, Any] = {
+    "beats": [
+        {
+            "image_prompt": f"beat {i} visual",
+            "narration": f"beat {i} narration",
+            "duration_sec": 4.0,
+        }
+        for i in range(4)
+    ]
+}
+
+
+def test_demo_script_writer_snapshot_parses_to_storyboard() -> None:
+    """TC-8.8 / TC-22.5: pinned demo-script-writer stdout parses to a Storyboard.
+
+    Asserts the JSON shape (single `beats` key), the beat count is in [4, 6],
+    and every beat carries all three required fields with a 3-5 s duration.
+    """
+    stage = script_mod.ScriptStage(
+        subprocess_run=_stub_run(json.dumps(_SCRIPT_SNAPSHOT))
+    )
+
+    parsed = stage._invoke_subagent("demo-script-writer", "draft the storyboard")
+
+    # Parsed JSON shape — exactly the Storyboard keys, nothing extra.
+    assert set(parsed.keys()) == {"beats"}
+
+    storyboard = Storyboard.model_validate(parsed)
+    assert 4 <= len(storyboard.beats) <= 6
+    for beat in storyboard.beats:
+        assert beat.image_prompt
+        assert beat.narration
+        assert 3.0 <= beat.duration_sec <= 5.0
+
+
+def test_demo_script_writer_snapshot_rejects_bad_beat_count() -> None:
+    """A snapshot with 3 beats fails Storyboard's 4-6 beat validation."""
+    bad = {"beats": _SCRIPT_SNAPSHOT["beats"][:3]}
+    stage = script_mod.ScriptStage(subprocess_run=_stub_run(json.dumps(bad)))
+
+    parsed = stage._invoke_subagent("demo-script-writer", "draft the storyboard")
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Storyboard.model_validate(parsed)
+
+
+# --------------------------------------------------------------------------- #
+# Agent file existence + frontmatter (TC-7.8 / TC-8.7 / AC-6.3)
 # --------------------------------------------------------------------------- #
 
 
@@ -128,6 +183,25 @@ def test_tc_7_8_brand_guardian_agent_file_exists_with_frontmatter() -> None:
     meta = yaml.safe_load(fm)
     assert isinstance(meta, dict)
     assert meta.get("name") == "brand-guardian"
+    assert "model" in meta
+    assert "tools" in meta
+    assert isinstance(meta["tools"], list)
+
+
+def test_tc_8_7_demo_script_writer_agent_file_exists_with_frontmatter() -> None:
+    """TC-8.7: `~/.claude/agents/demo-script-writer.md` exists with name/model/tools."""
+    path = Path.home() / ".claude" / "agents" / "demo-script-writer.md"
+    assert path.is_file(), f"agent file not installed at {path}"
+
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---"), "agent file must open with YAML frontmatter"
+    _, fm, _body = text.split("---", 2)
+
+    import yaml
+
+    meta = yaml.safe_load(fm)
+    assert isinstance(meta, dict)
+    assert meta.get("name") == "demo-script-writer"
     assert "model" in meta
     assert "tools" in meta
     assert isinstance(meta["tools"], list)

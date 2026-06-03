@@ -412,6 +412,56 @@ class StoryboardBeat(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Storyboard (s05_script artifact)
+# --------------------------------------------------------------------------- #
+
+
+class Storyboard(BaseModel):
+    """The ``05_script/storyboard.json`` artifact written by ``s05_script``.
+
+    Produced by the ``demo-script-writer`` sub-agent (a single ``claude -p``
+    call), which fleshes out the planner's 4-beat skeleton into the showcase
+    storyboard: each beat pairs a visual prompt with its voiceover line and an
+    on-screen duration.
+
+    Beat-count rule (HARD): 4-6 beats inclusive. ``s05_script.run`` ALSO
+    enforces this against the parsed sub-agent JSON BEFORE writing, raising
+    :class:`shipcast.errors.SubagentMalformedOutput` for a count outside the
+    range (TC-8.3 / TC-8.4). The same bound is duplicated here so the default
+    ``validate_outputs`` re-checks it on disk as defense-in-depth.
+
+    Duration rule (HARD): each beat's ``duration_sec`` MUST be in [3, 5]
+    inclusive (showcase pacing — 4 beats x 3-5 s). ``StoryboardBeat`` already
+    requires ``duration_sec > 0``; this model tightens it to the 3-5 s window.
+
+    Fields:
+    * ``beats`` — 4-6 :class:`StoryboardBeat` objects, each
+      ``{image_prompt, narration, duration_sec}`` with ``duration_sec`` in 3-5 s.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    beats: list[StoryboardBeat]
+
+    @field_validator("beats")
+    @classmethod
+    def _beat_count_and_durations(
+        cls, v: list[StoryboardBeat]
+    ) -> list[StoryboardBeat]:
+        if not (4 <= len(v) <= 6):
+            raise ValueError(
+                f"storyboard must contain 4-6 beats (inclusive), got {len(v)}"
+            )
+        for i, beat in enumerate(v):
+            if not (3.0 <= beat.duration_sec <= 5.0):
+                raise ValueError(
+                    f"beat {i} duration_sec must be in [3, 5] s, "
+                    f"got {beat.duration_sec}"
+                )
+        return v
+
+
+# --------------------------------------------------------------------------- #
 # CarouselBeat (s04_plan carousel_beats → s09_graphics LinkedIn carousel)
 # --------------------------------------------------------------------------- #
 
