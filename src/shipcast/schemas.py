@@ -388,6 +388,14 @@ class StoryboardBeat(BaseModel):
     * ``narration`` — non-empty voiceover line for the beat.
     * ``duration_sec`` — on-screen seconds (> 0). ``s05_script`` constrains this
       to 3-5 s per beat; the brief skeleton only requires it be positive.
+    * ``show_interface`` — whether this beat DEPICTS THE PRODUCT'S UI /
+      on-screen interface. When ``True``, ``s06_video_assets`` grounds the
+      standard-mode Imagen still in the real app screenshot
+      (``03_brand/style_sheet.png`` as the reference image) so the beat echoes
+      the actual interface; when ``False`` (the default) the beat stays a pure
+      text-to-image abstract/hero shot. Defaults to ``False`` so existing data
+      and the brief's ``video_beats`` skeleton are unaffected (the field is
+      optional in JSON).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -395,6 +403,7 @@ class StoryboardBeat(BaseModel):
     image_prompt: str
     narration: str
     duration_sec: float
+    show_interface: bool = False
 
     @field_validator("image_prompt", "narration")
     @classmethod

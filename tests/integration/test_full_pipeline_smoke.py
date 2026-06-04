@@ -186,13 +186,18 @@ def _valid_brief() -> dict[str, Any]:
 
 
 def _valid_storyboard() -> dict[str, Any]:
-    """A schema-valid Storyboard: exactly 4 beats, each 3-5 s on screen."""
+    """A schema-valid Storyboard: exactly 4 beats, each 3-5 s on screen.
+
+    Beat 0 is flagged ``show_interface=True`` so the full-pipeline smoke also
+    exercises the standard-mode style-sheet grounding path (the mocked Gemini
+    auto-accepts the ``reference_image_bytes`` kwarg)."""
     return {
         "beats": [
             {
                 "image_prompt": f"showcase beat {i}",
                 "narration": f"Showcase narration beat {i}.",
                 "duration_sec": 4.0,
+                "show_interface": (i == 0),
             }
             for i in range(4)
         ]

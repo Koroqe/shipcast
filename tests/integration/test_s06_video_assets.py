@@ -669,7 +669,14 @@ def test_tc_9_8_imagen_rate_limit_fails(
     # First still ok, second still raises transient on every retry attempt.
     state = {"calls": 0}
 
-    def _gen(prompt: str, *, model: str, seed: int, aspect_ratio: str = "16:9") -> bytes:
+    def _gen(
+        prompt: str,
+        *,
+        model: str,
+        seed: int,
+        reference_image_bytes: bytes | None = None,
+        aspect_ratio: str = "16:9",
+    ) -> bytes:
         state["calls"] += 1
         if state["calls"] == 1:
             return _solid_png()
@@ -717,3 +724,107 @@ def test_gap_imagen_safety_block_subtype(
     # GAP closure: the safety-block subtype is preserved as the error.type.
     assert record.error.type == "GeminiSafetyBlocked"
     assert "cost_usd" not in record.metrics
+
+
+# --------------------------------------------------------------------------- #
+# show_interface — selective style-transfer from the brand style sheet
+# --------------------------------------------------------------------------- #
+
+
+_STYLE_SHEET_BYTES = b"REAL-WEBSITE-STYLE-SHEET-SCREENSHOT-BYTES"
+
+
+def _interface_storyboard() -> dict[str, Any]:
+    """4 standard beats: beats 0 and 2 depict the UI, beats 1 and 3 do not."""
+    return {
+        "beats": [
+            {
+                "image_prompt": f"beat {i} visual",
+                "narration": f"beat {i} line",
+                "duration_sec": 4.0,
+                "show_interface": (i % 2 == 0),
+            }
+            for i in range(4)
+        ]
+    }
+
+
+def _write_storyboard(projects_root: Path, storyboard: dict[str, Any]) -> None:
+    """Overwrite the approved storyboard.json (s06 reads it straight off disk)."""
+    path = projects_root / SLUG / "05_script" / "storyboard.json"
+    path.write_text(json.dumps(storyboard), encoding="utf-8")
+
+
+def _write_style_sheet(projects_root: Path, data: bytes | None) -> None:
+    """Write (or remove) 03_brand/style_sheet.png with known bytes."""
+    path = projects_root / SLUG / "03_brand" / "style_sheet.png"
+    if data is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_bytes(data)
+
+
+def test_show_interface_flagged_beats_get_style_sheet_reference(
+    projects_root: Path, target_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Standard mode: flagged beats pass the style sheet as reference_image_bytes;
+    unflagged beats pass None. The flagged-beat prompt is style-transfer-wrapped."""
+    _drive_to_script_approved(projects_root, target_repo, monkeypatch, video_mode="standard")
+    _write_storyboard(projects_root, _interface_storyboard())
+    _write_style_sheet(projects_root, _STYLE_SHEET_BYTES)
+
+    gemini = MagicMock()
+    gemini.generate_image.return_value = _solid_png()
+    veo = MagicMock()
+    _install_clients(monkeypatch, gemini=gemini, veo=veo)
+
+    result = runner.invoke(cli.app, [*_root(projects_root), "video_assets", SLUG])
+    assert result.exit_code == 0, result.output
+
+    # One Imagen still per beat, in beat order.
+    assert gemini.generate_image.call_count == 4
+    refs: list[bytes | None] = []
+    prompts: list[str] = []
+    for call in gemini.generate_image.call_args_list:
+        refs.append(call.kwargs["reference_image_bytes"])
+        prompts.append(call.args[0] if call.args else call.kwargs["prompt"])
+
+    # Beats 0 and 2 (show_interface=True) receive the style-sheet bytes; the
+    # others receive None.
+    assert refs == [
+        _STYLE_SHEET_BYTES,
+        None,
+        _STYLE_SHEET_BYTES,
+        None,
+    ]
+    # The flagged beats' prompts are style-transfer-wrapped; the others are not.
+    assert prompts[0].startswith("Render this in the VISUAL STYLE")
+    assert "beat 0 visual" in prompts[0]
+    assert not prompts[1].startswith("Render this in the VISUAL STYLE")
+    assert prompts[1] == "beat 1 visual"
+    assert prompts[2].startswith("Render this in the VISUAL STYLE")
+    assert prompts[3] == "beat 3 visual"
+
+
+def test_show_interface_without_style_sheet_passes_no_reference(
+    projects_root: Path, target_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defensive: no style sheet → every still is pure text-to-image (ref None),
+    even for flagged beats; the stage does not crash."""
+    _drive_to_script_approved(projects_root, target_repo, monkeypatch, video_mode="standard")
+    _write_storyboard(projects_root, _interface_storyboard())
+    _write_style_sheet(projects_root, None)
+
+    gemini = MagicMock()
+    gemini.generate_image.return_value = _solid_png()
+    veo = MagicMock()
+    _install_clients(monkeypatch, gemini=gemini, veo=veo)
+
+    result = runner.invoke(cli.app, [*_root(projects_root), "video_assets", SLUG])
+    assert result.exit_code == 0, result.output
+
+    assert gemini.generate_image.call_count == 4
+    for call in gemini.generate_image.call_args_list:
+        assert call.kwargs["reference_image_bytes"] is None
+        prompt = call.args[0] if call.args else call.kwargs["prompt"]
+        assert not prompt.startswith("Render this in the VISUAL STYLE")

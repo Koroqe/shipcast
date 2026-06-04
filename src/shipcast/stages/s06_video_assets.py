@@ -72,6 +72,16 @@ _IMAGE_RETRIES: int = 3
 #: Veo conditioning image (optional). Present iff s03_brand emitted one.
 _STYLE_SHEET_REL: str = "03_brand/style_sheet.png"
 
+#: Prepended to a beat's ``image_prompt`` when that beat is grounded in the real
+#: UI screenshot (``show_interface=True`` + a style sheet present). Mirrors the
+#: style-transfer wording in ``s09_graphics._background_prompt``.
+_STYLE_TRANSFER_PREFIX: str = (
+    "Render this in the VISUAL STYLE of the supplied reference image — the "
+    "product's real UI — matching its colours, gradients, layout language and "
+    "design treatment; do not render literal text or UI elements you cannot "
+    "read. "
+)
+
 #: Expected clip geometry/codec (every clip, both modes).
 _EXPECTED_CODEC: str = "h264"
 _EXPECTED_WIDTH: int = 1080
@@ -220,6 +230,16 @@ class VideoAssetsStage(BaseStage):
         stage_dir = project.stage_dir(self.id)
         stage_dir.mkdir(parents=True, exist_ok=True)
 
+        # Read the real brand style-sheet screenshot ONCE (mirrors s09). It is
+        # passed as the Gemini reference image only for standard-mode Imagen
+        # stills whose beat has ``show_interface=True`` — grounding those beats
+        # in the actual app UI. ``None`` when s03_brand emitted no style sheet,
+        # in which case every beat stays pure text-to-image.
+        style_sheet_path = project.path / _STYLE_SHEET_REL
+        style_sheet_bytes = (
+            style_sheet_path.read_bytes() if style_sheet_path.is_file() else None
+        )
+
         cost = 0.0
         records: list[dict[str, Any]] = []
         outputs: list[Path] = []
@@ -228,7 +248,14 @@ class VideoAssetsStage(BaseStage):
         for index, beat in enumerate(storyboard.beats):
             clip_path = stage_dir / f"beat_{index:02d}.mp4"
             source, beat_cost = self._dispatch_beat(
-                project, clients, beat, index, mode, clip_path, image_model
+                project,
+                clients,
+                beat,
+                index,
+                mode,
+                clip_path,
+                image_model,
+                style_sheet_bytes,
             )
             cost += beat_cost
             self._validate_clip(clip_path)
@@ -267,20 +294,27 @@ class VideoAssetsStage(BaseStage):
         mode: str,
         clip_path: Path,
         image_model: str,
+        style_sheet_bytes: bytes | None,
     ) -> tuple[str, float]:
         """Render one beat; return ``(source, cost_usd)``.
 
         Premium beat[0] tries Veo first and silently falls back to Ken-Burns on a
         :class:`VeoSafetyBlocked`. ``VeoQuotaExceeded`` / ``VeoTimeout`` propagate
-        (HARD failure handled by the dispatcher).
+        (HARD failure handled by the dispatcher). ``style_sheet_bytes`` is the
+        real brand UI screenshot (or ``None``); it grounds a Ken-Burns still only
+        when ``beat.show_interface`` is set (see ``_render_kenburns_clip``).
         """
         if mode == "premium" and index == 0:
             try:
                 return self._render_veo_clip(project, clients, beat, clip_path)
             except VeoSafetyBlocked:
                 # SECURITY: do NOT log the blocked prompt. Fall back silently.
-                return self._render_kenburns_clip(clients, beat, clip_path, image_model)
-        return self._render_kenburns_clip(clients, beat, clip_path, image_model)
+                return self._render_kenburns_clip(
+                    clients, beat, clip_path, image_model, style_sheet_bytes
+                )
+        return self._render_kenburns_clip(
+            clients, beat, clip_path, image_model, style_sheet_bytes
+        )
 
     def _render_veo_clip(
         self,
@@ -305,9 +339,17 @@ class VideoAssetsStage(BaseStage):
         beat: StoryboardBeat,
         clip_path: Path,
         image_model: str,
+        style_sheet_bytes: bytes | None,
     ) -> tuple[str, float]:
-        """Imagen still (9:16) + ffmpeg Ken-Burns → ``(source, cost)``."""
-        still_bytes = self._generate_still_with_retry(clients, beat, image_model)
+        """Imagen still (9:16) + ffmpeg Ken-Burns → ``(source, cost)``.
+
+        When ``beat.show_interface`` is set AND a brand style sheet is present,
+        the still is style-transferred from that real-UI screenshot; otherwise
+        it stays pure text-to-image.
+        """
+        still_bytes = self._generate_still_with_retry(
+            clients, beat, image_model, style_sheet_bytes
+        )
         still_path = clip_path.with_suffix(".png")
         still_path.write_bytes(still_bytes)
         try:
@@ -321,21 +363,41 @@ class VideoAssetsStage(BaseStage):
         return "ken_burns", IMAGEN_IMAGE_USD
 
     def _generate_still_with_retry(
-        self, clients: _ClientsBundle, beat: StoryboardBeat, image_model: str
+        self,
+        clients: _ClientsBundle,
+        beat: StoryboardBeat,
+        image_model: str,
+        style_sheet_bytes: bytes | None,
     ) -> bytes:
         """Call Imagen with a bounded retry on transient errors.
+
+        When ``beat.show_interface`` is set AND ``style_sheet_bytes`` is present,
+        the beat's ``image_prompt`` is wrapped with a style-transfer instruction
+        and the real-UI screenshot is passed as ``reference_image_bytes`` so the
+        still echoes the actual interface. Otherwise the call stays pure
+        text-to-image (no reference) — abstract/hero beats are not forced to look
+        like the website.
 
         A :class:`GeminiSafetyBlocked` is re-raised UNWRAPPED (GAP closure); any
         other non-transient error and transient-retry exhaustion are wrapped in
         :class:`GeminiImageGenFailed`.
         """
+        ground_in_ui = beat.show_interface and style_sheet_bytes is not None
+        prompt = (
+            _STYLE_TRANSFER_PREFIX + beat.image_prompt
+            if ground_in_ui
+            else beat.image_prompt
+        )
+        reference = style_sheet_bytes if ground_in_ui else None
+
         last_exc: BaseException | None = None
         for _attempt in range(_IMAGE_RETRIES):
             try:
                 return clients.gemini.generate_image(
-                    beat.image_prompt,
+                    prompt,
                     model=image_model,
                     seed=0,
+                    reference_image_bytes=reference,
                     aspect_ratio="9:16",
                 )
             except GeminiSafetyBlocked:
