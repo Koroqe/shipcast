@@ -467,19 +467,26 @@ class GraphicsStage(BaseStage):
     ) -> str:
         """Build the Imagen background prompt for an aspect card.
 
-        The background must read on-brand (the palette-conformance gate measures
-        dE-2000 against the brand hexes), so the prompt names the three brand
-        colours explicitly and asks for a clean, text-friendly composition with
-        ample negative space for the overlaid headline.
+        The prompt asks the model to STYLE-TRANSFER from the supplied brand
+        reference image (``03_brand/style_sheet.png`` — the real website
+        screenshot) so the card echoes the product's actual visual identity
+        (colour treatment, gradients, shapes, design language), rather than a
+        flat palette-only abstraction. The three brand hexes are passed as a
+        secondary hint, and the prompt reserves a clean area for the overlaid
+        headline. (Palette conformance is a test-time helper, not a runtime
+        gate, so it does not force flat-colour backgrounds here.)
         """
         primary, accent, neutral = palette
         return (
-            f"Clean, modern, on-brand marketing background for a software launch "
-            f"card ({ratio}), consistent with the supplied brand reference image. "
-            f"Use ONLY these brand colours: primary {primary}, accent {accent}, "
-            f"neutral {neutral}. Large areas of flat brand colour with ample "
-            f"negative space and high contrast for an overlaid headline. No text, "
-            f"no logos, no busy detail. Theme: {headline!r}."
+            f"Generate a marketing-card background image ({ratio}) for a software "
+            f"product launch, in the VISUAL STYLE of the supplied reference image "
+            f"(the product's real website): closely match its colour treatment, "
+            f"gradients, shapes, textures, lighting and overall design language "
+            f"so the card unmistakably reads as the same brand. Brand palette for "
+            f"reference: primary {primary}, accent {accent}, neutral {neutral}. "
+            f"Leave a clean, relatively uncluttered area with good contrast for an "
+            f"overlaid headline. Do NOT render any text, words, or letters "
+            f"yourself. Theme: {headline!r}."
         )
 
     @staticmethod
