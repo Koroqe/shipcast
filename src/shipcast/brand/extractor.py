@@ -57,24 +57,45 @@ def extract_palette_and_font(playwright: _PlaywrightLike, url: str) -> PaletteFo
 #: Min ΔE-CIE2000 distance for ``accent`` to count as "distinct" from ``primary``.
 _DISTINCT_DELTA_E: float = 12.0
 
+#: Drop colours below this share of total pixels — antialiasing/JPEG speckle that
+#: should never be mistaken for a brand colour. A real CTA button or accent
+#: region sits comfortably ABOVE this floor, so it survives.
+_FREQUENCY_FLOOR: float = 0.004  # 0.4 % of pixels
+
+#: Minimum HSV saturation for a colour to count as "branded" (chromatic). Pale
+#: hero washes and near-white/near-grey backgrounds fall below this gate; vivid
+#: CTA greens / headline navies clear it.
+_SATURATION_GATE: float = 0.25
+
 
 def palette_from_image(png_bytes: bytes) -> list[str]:
     """Derive EXACTLY 3 distinct ``#RRGGBB`` hex codes from a screenshot.
 
     Returns ``[primary, accent, neutral]`` extracted from the real first-screen
     website screenshot (the policy ``s03_brand`` uses when a ``live_url`` is
-    present and no ``palette.hint.json`` overrides it):
+    present and no ``palette.hint.json`` overrides it).
 
-    * ``neutral`` — the MOST frequent colour (usually the page background).
-    * ``primary`` — the most VIVID remaining colour (highest HSV saturation,
-      then frequency).
-    * ``accent``  — the next vivid colour that is sufficiently DISTINCT from
-      ``primary`` (ΔE-CIE2000 ≥ :data:`_DISTINCT_DELTA_E`).
+    The heuristic weights VIVIDNESS over raw frequency so that small-but-branded
+    regions (a green CTA button, a navy headline) win over a large but pale hero
+    wash — the failure mode of the old frequency-only ranking on real sites like
+    getdeal.ai:
 
-    If the image is too monochrome to yield three vivid, distinct colours, falls
-    back to the top-3 colours by frequency (still guaranteed distinct). Pure and
-    deterministic: identical bytes always yield the identical triple. The PIL
-    import is lazy so importing this module never pulls Pillow into
+    * Quantize to 16 colours (vs 6) so small vivid regions survive the collapse,
+      then drop "speck" colours below :data:`_FREQUENCY_FLOOR` (antialiasing).
+    * ``neutral`` — the MOST frequent surviving colour (the page background,
+      usually white / near-white / a pale wash).
+    * ``primary`` / ``accent`` — the most SATURATED surviving colours that clear
+      the :data:`_SATURATION_GATE` "branded" threshold, preferring higher HSV
+      saturation and tie-breaking on frequency (a button-sized vivid region beats
+      a one-pixel speck). ``accent`` must also be ΔE-CIE2000 ≥
+      :data:`_DISTINCT_DELTA_E` from ``primary``.
+
+    If fewer than two colours clear the saturation gate (a genuinely muted /
+    monochrome site), it falls back to the previous behaviour — most-vivid
+    available, then frequency — so it still yields three DISTINCT hex codes.
+    Never returns duplicates. Pure and deterministic: identical bytes always
+    yield the identical triple (ties break on the RGB tuple). The PIL + colorsys
+    imports are lazy so importing this module never pulls Pillow into
     ``sys.modules``.
     """
     import colorsys
@@ -87,9 +108,10 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
     with Image.open(io.BytesIO(png_bytes)) as raw:
         img = raw.convert("RGB")
         # Downscale so getcolors is cheap and pixel-frequency is stable; quantize
-        # to a small palette so near-identical antialiased pixels collapse.
+        # to 16 colours (not 6) so a small-but-vivid CTA/accent region keeps its
+        # own bucket instead of being merged into a neighbouring pale colour.
         img.thumbnail((256, 256))
-        quant = img.quantize(colors=6).convert("RGB")
+        quant = img.quantize(colors=16).convert("RGB")
 
     raw_counts = quant.getcolors(maxcolors=256 * 256) or []
     counts: list[tuple[int, tuple[int, int, int]]] = []
@@ -97,9 +119,17 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
         # `quant` is RGB, so each colour is a 3-tuple; narrow for the type checker.
         assert isinstance(rgb, tuple)
         counts.append((int(count), (int(rgb[0]), int(rgb[1]), int(rgb[2]))))
+
+    total_pixels = sum(count for count, _rgb in counts) or 1
+    floor = total_pixels * _FREQUENCY_FLOOR
+    # Drop antialiasing specks, but never drop everything: if the floor would
+    # empty the list (tiny synthetic images), keep all surviving colours.
+    survivors = [item for item in counts if item[0] >= floor] or counts
+
     # Sort by descending frequency; tie-break on the RGB tuple for determinism.
-    ranked = sorted(counts, key=lambda item: (-item[0], item[1]))
-    ordered_rgb: list[tuple[int, int, int]] = [rgb for _count, rgb in ranked]
+    ranked = sorted(survivors, key=lambda item: (-item[0], item[1]))
+    ordered: list[tuple[int, tuple[int, int, int]]] = list(ranked)
+    ordered_rgb: list[tuple[int, int, int]] = [rgb for _count, rgb in ordered]
 
     def _hex(rgb: tuple[int, int, int]) -> str:
         return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
@@ -114,23 +144,40 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
         )
         return s
 
-    # neutral = most frequent colour (page background).
+    # neutral = most frequent surviving colour (page background / pale wash).
     neutral_rgb = ordered_rgb[0]
     neutral = _hex(neutral_rgb)
 
-    remaining = ordered_rgb[1:]
-    # Rank the rest by vividness (saturation), tie-break on original frequency
-    # order (already encoded as index in `remaining`).
-    by_vividness = sorted(
-        enumerate(remaining), key=lambda pair: (-_saturation(pair[1]), pair[0])
-    )
-    vivid_rgb = [rgb for _idx, rgb in by_vividness]
+    # Candidates for primary/accent: everything except the neutral, paired with
+    # frequency rank so vividness ties break toward the more abundant region.
+    remaining = ordered[1:]
+    qualifiers = [
+        (rank, count, rgb)
+        for rank, (count, rgb) in enumerate(remaining)
+        if _saturation(rgb) >= _SATURATION_GATE
+    ]
+    # Prefer higher saturation; tie-break on frequency rank (lower rank = more
+    # frequent), which is itself RGB-deterministic from the ranked sort above.
+    qualifiers.sort(key=lambda item: (-_saturation(item[2]), item[0]))
+    qualified_rgb = [rgb for _rank, _count, rgb in qualifiers]
 
-    primary = vivid_rgb[0] if vivid_rgb else None
+    # Vivid-ordered fallback pool (all remaining colours, most-saturated first):
+    # used when the saturation gate yields fewer than two branded colours.
+    fallback_rgb = [
+        rgb
+        for _rank, rgb in sorted(
+            enumerate(ordered_rgb[1:]),
+            key=lambda pair: (-_saturation(pair[1]), pair[0]),
+        )
+    ]
+
+    pool = qualified_rgb if len(qualified_rgb) >= 2 else fallback_rgb
+
+    primary = pool[0] if pool else None
     accent: tuple[int, int, int] | None = None
     if primary is not None:
         primary_hex = _hex(primary)
-        for rgb in vivid_rgb[1:]:
+        for rgb in pool[1:]:
             if delta_e_hex(primary_hex, _hex(rgb)) >= _DISTINCT_DELTA_E:
                 accent = rgb
                 break
@@ -142,8 +189,8 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
         chosen.append(_hex(accent))
     chosen.append(neutral)
 
-    # Monochrome / too-few-vivid fallback: fill from the frequency ranking,
-    # guaranteeing three DISTINCT hex codes.
+    # Fill any gap from the frequency ranking (then the full count list),
+    # guaranteeing three DISTINCT hex codes even on muted/monochrome images.
     result: list[str] = []
     for hex_code in chosen + [_hex(rgb) for rgb in ordered_rgb]:
         if hex_code not in result:

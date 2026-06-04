@@ -255,6 +255,61 @@ def test_palette_from_image_neutral_is_background() -> None:
     assert delta_e_hex(primary, accent) >= 12
 
 
+def _getdeal_screenshot() -> bytes:
+    """getdeal.ai-like: mostly white + a large PALE-BLUE hero, with a SMALL but
+    clearly-saturated GREEN CTA and a SMALL NAVY headline.
+
+    The pale hero is the largest non-white area; the green + navy are small (but
+    far above the 0.4% frequency floor). A frequency-only heuristic would pick
+    the pale blues and miss the real brand colours — the vividness heuristic must
+    surface GREEN + NAVY as primary/accent and the pale/white as neutral.
+    """
+    from PIL import Image, ImageDraw
+
+    # 200x200 = 40,000 px. 0.4% floor = 160 px. Each small rect below is well
+    # above that yet far smaller than the white + pale-hero background.
+    img = Image.new("RGB", (200, 200), (255, 255, 255))  # white page
+    draw = ImageDraw.Draw(img)
+    # Large PALE light-blue hero band (dominant chromatic area, low saturation).
+    draw.rectangle([0, 10, 199, 90], fill=(186, 216, 239))  # ~#BAD8EF
+    # SMALL saturated GREEN CTA button (~30x18 = 540 px ≈ 1.35%).
+    draw.rectangle([20, 110, 50, 128], fill=(22, 163, 74))  # ~#16A34A green
+    # SMALL NAVY headline block (~40x12 = 480 px ≈ 1.2%).
+    draw.rectangle([20, 150, 60, 162], fill=(15, 35, 90))  # navy
+    return _png_bytes(img)
+
+
+def test_palette_from_image_surfaces_branded_over_pale_hero() -> None:
+    """getdeal-like: small saturated GREEN + NAVY win over the large pale hero.
+
+    Asserts neutral is the pale/white background and primary/accent are the
+    planted green + navy (compared via ΔE-CIE2000 closeness, allowing for
+    quantization), NOT the pale hero blues.
+    """
+    from shipcast.composition.color import delta_e_hex
+
+    palette = extractor.palette_from_image(_getdeal_screenshot())
+    assert len(palette) == 3
+    assert len(set(palette)) == 3
+    primary, accent, neutral = palette
+
+    green = "#16A34A"
+    navy = "#0F235A"
+    pale_blue = "#BAD8EF"
+
+    # Neutral is the pale/white background, NOT a saturated brand colour.
+    assert min(delta_e_hex(neutral, "#FFFFFF"), delta_e_hex(neutral, pale_blue)) < 12
+
+    # primary + accent together cover the planted GREEN and NAVY (order-agnostic).
+    brand = {primary, accent}
+    assert min(delta_e_hex(c, green) for c in brand) < 12, palette
+    assert min(delta_e_hex(c, navy) for c in brand) < 12, palette
+
+    # And NEITHER primary nor accent is the pale hero blue (the old wrong pick).
+    assert delta_e_hex(primary, pale_blue) > 12, palette
+    assert delta_e_hex(accent, pale_blue) > 12, palette
+
+
 def test_palette_from_image_monochrome_falls_back_to_three_distinct() -> None:
     """A near-solid image still yields three DISTINCT hex codes (fallback)."""
     from PIL import Image
