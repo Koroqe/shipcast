@@ -111,7 +111,7 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
         # to 16 colours (not 6) so a small-but-vivid CTA/accent region keeps its
         # own bucket instead of being merged into a neighbouring pale colour.
         img.thumbnail((256, 256))
-        quant = img.quantize(colors=16).convert("RGB")
+        quant = img.quantize(colors=24).convert("RGB")
 
     raw_counts = quant.getcolors(maxcolors=256 * 256) or []
     counts: list[tuple[int, tuple[int, int, int]]] = []
@@ -177,10 +177,17 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
     accent: tuple[int, int, int] | None = None
     if primary is not None:
         primary_hex = _hex(primary)
-        for rgb in pool[1:]:
-            if delta_e_hex(primary_hex, _hex(rgb)) >= _DISTINCT_DELTA_E:
-                accent = rgb
-                break
+        # accent = the MOST ΔE-distinct branded colour from primary (not merely
+        # the next-by-saturation), so a site whose vivid colours are two shades
+        # of one hue (e.g. getdeal's two blues) still yields a genuinely
+        # different second colour (its navy) rather than a near-twin of primary.
+        distinct = [
+            rgb
+            for rgb in pool[1:]
+            if delta_e_hex(primary_hex, _hex(rgb)) >= _DISTINCT_DELTA_E
+        ]
+        if distinct:
+            accent = max(distinct, key=lambda rgb: delta_e_hex(primary_hex, _hex(rgb)))
 
     chosen: list[str] = []
     if primary is not None:
