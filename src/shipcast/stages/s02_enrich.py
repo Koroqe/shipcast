@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from shipcast.project import Project
 
 #: Wall-clock budget for the `ba-analyst` sub-agent invocation.
-_SUBAGENT_TIMEOUT_SEC: int = 300
+_SUBAGENT_TIMEOUT_SEC: int = 600
 
 
 # --------------------------------------------------------------------------- #
