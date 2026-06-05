@@ -67,6 +67,14 @@ _FREQUENCY_FLOOR: float = 0.004  # 0.4 % of pixels
 #: CTA greens / headline navies clear it.
 _SATURATION_GATE: float = 0.25
 
+#: Value (HSV brightness) band a colour must fall in to count as a "branded"
+#: primary/accent. Near-black tinted colours (e.g. #010000, value≈0) and
+#: near-white colours report a spuriously high HSV saturation, so they are
+#: excluded here — a brand primary/accent should be a genuinely mid-toned,
+#: chromatic colour (doxa's gold accent qualifies; its black background does not).
+_VALUE_MIN: float = 0.18
+_VALUE_MAX: float = 0.95
+
 
 def palette_from_image(png_bytes: bytes) -> list[str]:
     """Derive EXACTLY 3 distinct ``#RRGGBB`` hex codes from a screenshot.
@@ -134,14 +142,16 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
     def _hex(rgb: tuple[int, int, int]) -> str:
         return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
-    def _saturation(rgb: tuple[int, int, int]) -> float:
-        # HSV saturation, NOT HLS: HLS reports near-white/near-black as fully
-        # saturated (its S blows up near the lightness extremes), so a near-white
-        # background was wrongly picked as the most "vivid" primary. HSV's
-        # S = (max-min)/max ranks chromatic colours high and near-white/black low.
-        _h, s, _v = colorsys.rgb_to_hsv(
-            rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0
-        )
+    def _vividness(rgb: tuple[int, int, int]) -> float:
+        # HSV-based vividness gated by VALUE (brightness). HSV saturation alone
+        # mis-ranks the lightness extremes: a near-white #FDFFFF or a near-black
+        # #010000 (1px of red at value≈0) both report S≈1.0, so they'd be wrongly
+        # chosen as the bold "primary". Requiring a mid-toned value (not near-black,
+        # not near-white) keeps only genuinely chromatic brand colours — e.g.
+        # doxa's gold accent qualifies, its near-black background does not.
+        _h, s, v = colorsys.rgb_to_hsv(rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0)
+        if not (_VALUE_MIN <= v <= _VALUE_MAX):
+            return 0.0
         return s
 
     # neutral = most frequent surviving colour (page background / pale wash).
@@ -154,20 +164,20 @@ def palette_from_image(png_bytes: bytes) -> list[str]:
     qualifiers = [
         (rank, count, rgb)
         for rank, (count, rgb) in enumerate(remaining)
-        if _saturation(rgb) >= _SATURATION_GATE
+        if _vividness(rgb) >= _SATURATION_GATE
     ]
-    # Prefer higher saturation; tie-break on frequency rank (lower rank = more
+    # Prefer higher vividness; tie-break on frequency rank (lower rank = more
     # frequent), which is itself RGB-deterministic from the ranked sort above.
-    qualifiers.sort(key=lambda item: (-_saturation(item[2]), item[0]))
+    qualifiers.sort(key=lambda item: (-_vividness(item[2]), item[0]))
     qualified_rgb = [rgb for _rank, _count, rgb in qualifiers]
 
-    # Vivid-ordered fallback pool (all remaining colours, most-saturated first):
-    # used when the saturation gate yields fewer than two branded colours.
+    # Vivid-ordered fallback pool (all remaining colours, most-vivid first):
+    # used when the gate yields fewer than two branded colours.
     fallback_rgb = [
         rgb
         for _rank, rgb in sorted(
             enumerate(ordered_rgb[1:]),
-            key=lambda pair: (-_saturation(pair[1]), pair[0]),
+            key=lambda pair: (-_vividness(pair[1]), pair[0]),
         )
     ]
 

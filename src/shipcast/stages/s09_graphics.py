@@ -439,7 +439,18 @@ class GraphicsStage(BaseStage):
         font_size = layout.snap_to_grid(min(width, height) * 0.10)
         font = _load_font(font_size, font_path)
 
-        primary, _accent, neutral = palette
+        # Headline fill = the LIGHTEST available colour, stroke = the DARKEST, so
+        # the text reads on any background (light OR dark brand) while staying
+        # on-brand: white-on-navy for a light brand, gold-on-black for a dark one.
+        # White/black are included as candidates to guarantee real contrast.
+        def _lum(hex_code: str) -> float:
+            h = hex_code.lstrip("#")
+            r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+            return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+
+        candidates = [*palette, "#FFFFFF", "#000000"]
+        fill = max(candidates, key=_lum)
+        stroke_fill = min(candidates, key=_lum)
         # Wrap the headline so it fits inside the padded safe width.
         lines = GraphicsStage._wrap_headline(
             headline, font, draw, max_width=width - 2 * pad
@@ -456,8 +467,8 @@ class GraphicsStage(BaseStage):
                 line,
                 (width / 2, y),
                 font,
-                fill=neutral,
-                stroke_fill=primary,
+                fill=fill,
+                stroke_fill=stroke_fill,
                 anchor="mt",
             )
 
